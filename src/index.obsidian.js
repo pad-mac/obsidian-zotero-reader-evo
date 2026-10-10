@@ -65,6 +65,16 @@ import { initializeEditorMathJax } from "./obsidian-mathjax.js";
 				readerAdapter.navigate(location);
 				return true;
 			},
+			// ZotFlow Evo
+			async setToolbarHidden(hidden) {
+				readerAdapter.setToolbarHidden(hidden);
+				return true;
+			},
+			// ZotFlow Evo
+			async setAnnotationPopupSuppressed(suppressed) {
+				readerAdapter.setAnnotationPopupSuppressed(suppressed);
+				return true;
+			},
 			async destroy() {
 				if (destroyed) return true;
 				destroyed = true;

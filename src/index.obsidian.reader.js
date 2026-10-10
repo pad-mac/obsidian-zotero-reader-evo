@@ -3,6 +3,12 @@ import zoteroFTL from '../locales/en-US/zotero.ftl';
 import readerFTL from '../locales/en-US/reader.ftl';
 import brandFTL from '../locales/en-US/brand.ftl';
 import { ObsidianBridge } from "./obsidian-adapter";
+import {
+	applyAnnotationPopupSuppressed,
+	applyResolvedObsidianVariables,
+	applyToolbarHidden,
+	refreshResolvedObsidianVariables,
+} from "./obsidian-evo";
 
 /**
  * -----------------------------------------------------------
@@ -26,6 +32,11 @@ export default class ZoteroReaderAdapter {
 	}
 
 	secondaryViewInitialized = false;
+
+	// ZotFlow Evo: reader chrome toggled from the Obsidian view header.
+	toolbarHidden = false;
+
+	annotationPopupSuppressed = false;
 
 	async createReader(opts) {
 		const defaults = {
@@ -144,6 +155,12 @@ export default class ZoteroReaderAdapter {
 		const config = { ...defaults, ...opts };
 
 		this.applyColorScheme(opts.colorScheme, document);
+
+		// ZotFlow Evo: Obsidian's computed variables, before the page theme and
+		// the toolbar colour are derived from them.
+		refreshResolvedObsidianVariables([document]);
+		this.setToolbarHidden(opts.toolbarHidden);
+		this.annotationPopupSuppressed = !!opts.annotationPopupSuppressed;
 		
 		// Check if obsidian theme is already in customThemes, if not add it
 		if (config.customThemes.some((t) => t.id === "obsidian")) {
@@ -181,6 +198,8 @@ export default class ZoteroReaderAdapter {
 		this.reader = new Reader(config);
 		await this.reader.initializedPromise;
 		window._reader = this.reader;
+		// ZotFlow Evo: needs the mounted reader UI.
+		this.setAnnotationPopupSuppressed(this.annotationPopupSuppressed);
 
 		// Wire the mobile "tap outside to close" backdrop (see
 		// index.obsidian.reader.html + stylesheets/components/_responsive.scss).
@@ -226,6 +245,13 @@ export default class ZoteroReaderAdapter {
 	}
 
 	applyColorSchemeForAll(colorScheme) {
+		// ZotFlow Evo: also called when Obsidian's CSS changed but the scheme
+		// did not, so read the variables again.
+		refreshResolvedObsidianVariables([
+			document,
+			this.reader?._primaryView?._iframeWindow?.document,
+			this.reader?._secondaryView?._iframeWindow?.document,
+		]);
 		this.applyColorScheme(colorScheme, document);
 		this.applyColorScheme(colorScheme, this.reader?._primaryView?._iframeWindow.document);
 		this.applyColorScheme(colorScheme, this.reader?._secondaryView?._iframeWindow.document);
@@ -259,6 +285,8 @@ export default class ZoteroReaderAdapter {
 	}
 
 	adoptObsidianStyles(obsidianThemeVariables, document) {
+		// ZotFlow Evo: `document` is the view iframe's document here.
+		applyResolvedObsidianVariables(document);
 		if (!obsidianThemeVariables || !document) return;
 		const varsStyle = document.createElement("style");
 		varsStyle.textContent = Object.entries(obsidianThemeVariables)
@@ -391,6 +419,18 @@ export default class ZoteroReaderAdapter {
 			id: "obsidian",
 			label: "Obsidian",
 		};
+	}
+
+	// ZotFlow Evo
+	setToolbarHidden(hidden) {
+		this.toolbarHidden = !!hidden;
+		applyToolbarHidden(this.toolbarHidden);
+	}
+
+	// ZotFlow Evo
+	setAnnotationPopupSuppressed(suppressed) {
+		this.annotationPopupSuppressed = !!suppressed;
+		applyAnnotationPopupSuppressed(this.reader, this.annotationPopupSuppressed);
 	}
 
 	addAnnotation(annotation) {

@@ -64,6 +64,8 @@ function View(props) {
 			{state[name + 'ViewAnnotationPopup']
 				&& (
 					(!state.sidebarOpen || state.sidebarView !== 'annotations')
+					// ZotFlow Evo: toggled from the Obsidian view header (obsidian-evo.js)
+					&& !state.zfEvoSuppressAnnotationPopup
 					&& state.annotations.find(x => x.id === state[name + 'ViewAnnotationPopup'].annotation.id)
 				)
 				&& <AnnotationPopup

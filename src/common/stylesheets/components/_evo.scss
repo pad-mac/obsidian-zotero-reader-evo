@@ -1,0 +1,31 @@
+//
+// ZotFlow Evo (fork). Imported last in `main.scss`, so these rules win by
+// source order. The behaviour behind them is in `src/obsidian-evo.js`; the
+// list of fork changes is in FORK.md in the plugin repository.
+//
+
+// The toolbar, and through it the area around the page, use Obsidian's main
+// background. Upstream maps them to `--file-header-background`. The area
+// around the page takes its colour from `--color-toolbar`
+// (`applyPageBackgroundColor()` in index.obsidian.reader.js).
+html.obsidian-theme-light:root[data-obsidian-theme],
+html.obsidian-theme-dark:root[data-obsidian-theme] {
+	--color-toolbar: var(--background-primary);
+}
+
+// Toolbar hidden from the Obsidian view header. Everything that sits below
+// the toolbar is positioned with a fixed 41px offset; take it back.
+body.zf-evo-toolbar-hidden {
+	.toolbar {
+		// The toolbar's height is set with `!important`.
+		display: none !important;
+	}
+
+	#split-view,
+	.split-view,
+	#sidebarContainer,
+	.sidebar-resizer,
+	#zf-sidebar-backdrop {
+		top: 0;
+	}
+}
