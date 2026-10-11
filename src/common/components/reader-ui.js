@@ -66,8 +66,6 @@ function View(props) {
 			{state[name + 'ViewAnnotationPopup']
 				&& (
 					(!state.sidebarOpen || state.sidebarView !== 'annotations')
-					// ZotFlow Evo: toggled from the Obsidian view header (obsidian-evo.js)
-					&& !state.zfEvoSuppressAnnotationPopup
 					// ZotFlow Evo: with the note strip open, comments are written there
 					&& !(state.zfEvoStrip?.visible && props.type === 'pdf')
 					&& state.annotations.find(x => x.id === state[name + 'ViewAnnotationPopup'].annotation.id)

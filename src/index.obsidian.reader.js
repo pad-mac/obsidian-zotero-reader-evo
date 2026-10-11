@@ -5,7 +5,6 @@ import brandFTL from '../locales/en-US/brand.ftl';
 import { ObsidianBridge } from "./obsidian-adapter";
 import {
 	annotationsNewerHere,
-	applyAnnotationPopupSuppressed,
 	applyNoteStrip,
 	noteLocalAnnotationWrites,
 	applyResolvedObsidianVariables,
@@ -39,8 +38,6 @@ export default class ZoteroReaderAdapter {
 
 	// ZotFlow Evo: reader chrome toggled from the Obsidian view header.
 	toolbarHidden = false;
-
-	annotationPopupSuppressed = false;
 
 	async createReader(opts) {
 		const defaults = {
@@ -168,7 +165,6 @@ export default class ZoteroReaderAdapter {
 		// the toolbar colour are derived from them.
 		refreshResolvedObsidianVariables([document]);
 		this.setToolbarHidden(opts.toolbarHidden);
-		this.annotationPopupSuppressed = !!opts.annotationPopupSuppressed;
 		// A setting changed while the reader was still loading is the newer one.
 		this.noteStrip = { ...opts.noteStrip, ...this.noteStrip };
 		
@@ -208,8 +204,6 @@ export default class ZoteroReaderAdapter {
 		this.reader = new Reader(config);
 		await this.reader.initializedPromise;
 		window._reader = this.reader;
-		// ZotFlow Evo: needs the mounted reader UI.
-		this.setAnnotationPopupSuppressed(this.annotationPopupSuppressed);
 
 		// Wire the mobile "tap outside to close" backdrop (see
 		// index.obsidian.reader.html + stylesheets/components/_responsive.scss).
@@ -442,13 +436,7 @@ export default class ZoteroReaderAdapter {
 		applyToolbarHidden(this.toolbarHidden);
 	}
 
-	// ZotFlow Evo
-	setAnnotationPopupSuppressed(suppressed) {
-		this.annotationPopupSuppressed = !!suppressed;
-		applyAnnotationPopupSuppressed(this.reader, this.annotationPopupSuppressed);
-	}
-
-	// ZotFlow Evo: `{ visible, collapsed, width, banner }`, any subset.
+	// ZotFlow Evo: `{ visible, collapsed, width, banner, highlights }`, any subset.
 	setNoteStrip(settings) {
 		if (!settings) return;
 		this.noteStrip = { ...this.noteStrip, ...settings };

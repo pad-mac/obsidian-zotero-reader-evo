@@ -14,9 +14,9 @@
  *   └─ #mainContainer
  *      ├─ #viewerContainer            the scrolling area, made narrower
  *      └─ #zf-evo-strip-column        beside it, does not scroll
- *         ├─ .zf-evo-banner           pinned title line
+ *         ├─ iframe#zf-evo-strip-head pinned: title line, filters, buttons
  *         └─ .zf-evo-clip
- *            └─ iframe#zf-evo-strip-frame
+ *            └─ iframe#zf-evo-strip-frame   the comments
  *
  * The iframe *element* is as tall as the whole scrolling content and is
  * moved by a scroll-driven animation bound to #viewerContainer, so a point
@@ -25,24 +25,30 @@
  * PDF view. The strip's content is rendered into it by the reader's own
  * React tree (see note-strip.js).
  *
- * In list mode the iframe is simply as tall as the column and scrolls by
+ * In list mode the iframe is simply as tall as the clip and scrolls by
  * itself.
+ *
+ * The head is a second small iframe for the same reason the strip is one:
+ * its buttons must not be taken for clicks on the PDF.
  */
 
 import { getSortIndex } from "../pdf/selection";
 import { PDF_NOTE_DIMENSIONS } from "../common/defines";
 import { followTheme, unfollowTheme } from "../obsidian-evo";
-import { LINE_HEIGHT, lineAt } from "./strip-layout.mjs";
+import { LINE_HEIGHT, lineAt, sortIndexOf } from "./strip-layout.mjs";
 
 const COLUMN_ID = "zf-evo-strip-column";
 const FRAME_ID = "zf-evo-strip-frame";
+const HEAD_ID = "zf-evo-strip-head";
 const STYLE_ID = "zf-evo-strip-host-style";
 const ON_CLASS = "zf-evo-strip-on";
 const ANCHORED_CLASS = "zf-evo-strip-anchored";
-const BANNER_HEIGHT = 26;
 
-/** Class on the strip document's root; `_evo.scss` keys the strip's styles off it. */
+/** Class on the root of the strip's documents; `_evo.scss` keys the strip's styles off it. */
 export const STRIP_DOC_CLASS = "zf-evo-strip-doc";
+
+/** Added on the root of the head's document. */
+export const STRIP_HEAD_CLASS = "zf-evo-strip-head";
 
 // Styles for the PDF view's document, which does not load the reader's
 // stylesheet. The strip's own look is in `_evo.scss`.
@@ -62,28 +68,19 @@ html.${ON_CLASS} #viewerContainer { right: var(--zf-evo-strip-width, 320px); }
 	border-inline-start: 1px solid var(--background-modifier-border, rgba(128, 128, 128, 0.25));
 }
 html.${ON_CLASS} #${COLUMN_ID} { display: block; }
-#${COLUMN_ID} .zf-evo-banner {
+#${HEAD_ID} {
 	position: absolute;
 	top: 0;
 	left: 0;
-	right: 0;
-	height: ${BANNER_HEIGHT}px;
-	box-sizing: border-box;
-	padding: 0 10px;
-	line-height: ${BANNER_HEIGHT - 1}px;
-	font: 12px/${BANNER_HEIGHT - 1}px var(--font-interface, system-ui, sans-serif);
-	color: var(--text-muted, #666);
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	border-bottom: 1px solid var(--background-modifier-border, rgba(128, 128, 128, 0.25));
-	pointer-events: none;
-	user-select: none;
+	width: 100%;
+	height: var(--zf-evo-head-height, 0px);
+	border: 0;
+	display: block;
+	background: transparent;
 }
-#${COLUMN_ID} .zf-evo-banner:empty { display: none; }
 #${COLUMN_ID} .zf-evo-clip {
 	position: absolute;
-	top: var(--zf-evo-banner-height, 0px);
+	top: var(--zf-evo-head-height, 0px);
 	left: 0;
 	right: 0;
 	bottom: 0;
@@ -104,9 +101,9 @@ html.${ON_CLASS} #${COLUMN_ID} { display: block; }
 	background: transparent;
 }
 /* Anchored: level with the pages. The frame starts where the scrolling
-   content starts, which is above the clip by the banner's height. */
+   content starts, which is above the clip by the head's height. */
 html.${ANCHORED_CLASS} #${FRAME_ID} {
-	top: calc(-1 * var(--zf-evo-banner-height, 0px));
+	top: calc(-1 * var(--zf-evo-head-height, 0px));
 	height: var(--zf-evo-content-height, 100%);
 	will-change: transform;
 }
@@ -193,8 +190,10 @@ export class EvoStripHost {
 
 		this.column = this.doc.createElement("div");
 		this.column.id = COLUMN_ID;
-		this.banner = this.doc.createElement("div");
-		this.banner.className = "zf-evo-banner";
+		this.head = this.doc.createElement("iframe");
+		this.head.id = HEAD_ID;
+		this.head.setAttribute("tabindex", "-1");
+		this.head.setAttribute("title", "Notes: filters");
 		this.clip = this.doc.createElement("div");
 		this.clip.className = "zf-evo-clip";
 		this.frame = this.doc.createElement("iframe");
@@ -202,25 +201,46 @@ export class EvoStripHost {
 		this.frame.setAttribute("tabindex", "-1");
 		this.frame.setAttribute("title", "Notes");
 		this.clip.appendChild(this.frame);
-		this.column.append(this.banner, this.clip);
+		this.column.append(this.head, this.clip);
 		main.appendChild(this.column);
 
-		// A document of its own, in standards mode.
-		const stripDoc = this.frame.contentDocument;
-		stripDoc.open();
-		stripDoc.write("<!doctype html><html><head><meta charset=\"utf-8\"></head><body></body></html>");
-		stripDoc.close();
+		// Documents of their own, in standards mode, styled and themed like
+		// the reader's. They have the colour of the area around the pages,
+		// whatever theme produced it.
+		const openDocument = (frame, ownClass) => {
+			const frameDoc = frame.contentDocument;
+			frameDoc.open();
+			frameDoc.write("<!doctype html><html><head><meta charset=\"utf-8\"></head><body></body></html>");
+			frameDoc.close();
+			copyStyles(document, frameDoc);
+			followTheme(frameDoc, ownClass, () => {
+				const surface = this.win.getComputedStyle(this.doc.documentElement)
+					.getPropertyValue("--pdf-page-background-color").trim();
+				if (surface) frameDoc.documentElement.style.setProperty("--zf-evo-surface", surface);
+				else frameDoc.documentElement.style.removeProperty("--zf-evo-surface");
+			});
+			return frameDoc;
+		};
+		const stripDoc = openDocument(this.frame, STRIP_DOC_CLASS);
 		this.stripDoc = stripDoc;
 		this.stripWin = this.frame.contentWindow;
-		copyStyles(document, stripDoc);
-		// The strip has the colour of the area around the pages, whatever
-		// theme produced it.
-		followTheme(stripDoc, STRIP_DOC_CLASS, () => {
-			const surface = this.win.getComputedStyle(this.doc.documentElement)
-				.getPropertyValue("--pdf-page-background-color").trim();
-			if (surface) stripDoc.documentElement.style.setProperty("--zf-evo-surface", surface);
-			else stripDoc.documentElement.style.removeProperty("--zf-evo-surface");
+		this.headDoc = openDocument(this.head, `${STRIP_DOC_CLASS} ${STRIP_HEAD_CLASS}`);
+		this.headWin = this.head.contentWindow;
+
+		// React renders the head into this node (note-strip.js). The head's
+		// frame is as tall as what is in it.
+		this.headMount = this.headDoc.createElement("div");
+		this.headMount.className = "zf-evo-head-root";
+		this.headDoc.body.appendChild(this.headMount);
+		this._headHeight = 0;
+		this._headObserver = new this.headWin.ResizeObserver(() => {
+			const height = Math.ceil(this.headMount.getBoundingClientRect().height);
+			if (height === this._headHeight) return;
+			this._headHeight = height;
+			this.column.style.setProperty("--zf-evo-head-height", height + "px");
+			this._geometryChanged();
 		});
+		this._headObserver.observe(this.headMount);
 
 		// Obsidian's editor and renderer expect its DOM helpers (createDiv,
 		// addClass, …) in whatever window they work in, as in one of its own
@@ -249,8 +269,10 @@ export class EvoStripHost {
 		this._onKey = this._onKey.bind(this);
 		this._onScroll = this._onScroll.bind(this);
 		this.stripWin.addEventListener("wheel", this._onWheel, { passive: false });
-		this.stripWin.addEventListener("keydown", this._onKey);
-		this.stripWin.addEventListener("keyup", this._onKey);
+		for (const win of [this.stripWin, this.headWin]) {
+			win.addEventListener("keydown", this._onKey);
+			win.addEventListener("keyup", this._onKey);
+		}
 		this.container.addEventListener("scroll", this._onScroll, { passive: true });
 		// Whether a mouse button is held on the pages, and whether that press
 		// turned into a drag (see afterPointer()). Chrome ends the pointer
@@ -368,12 +390,6 @@ export class EvoStripHost {
 		this._collapsed = collapsed;
 		this._applyMode();
 		this._emit("geometry");
-	}
-
-	setBanner(text) {
-		text = String(text || "").trim();
-		this.banner.textContent = text;
-		this.column.style.setProperty("--zf-evo-banner-height", text ? BANNER_HEIGHT + "px" : "0px");
 	}
 
 	_applyMode() {
@@ -550,6 +566,88 @@ export class EvoStripHost {
 		};
 	}
 
+	/** The page the PDF view counts as the current one. */
+	get currentPageIndex() {
+		const number = this.win.PDFViewerApplication?.pdfViewer?.currentPageNumber;
+		return number ? number - 1 : 0;
+	}
+
+	/**
+	 * Where a note written for a whole page goes on that page: against the
+	 * right-hand edge at the top, `slot` places down, so that several of them
+	 * do not lie on one spot.
+	 */
+	pageStartSpot(pageIndex, slot) {
+		const page = this.pageBox(pageIndex);
+		if (!page?.viewport) return null;
+		const viewport = page.viewport;
+		const half = PDF_NOTE_DIMENSIONS / 2;
+		const reach = half * viewport.scale;
+		const viewX = viewport.width - reach;
+		const viewY = Math.min(
+			reach + slot * 2 * reach,
+			Math.max(reach, viewport.height - reach)
+		);
+		const [x0, y0] = viewport.convertToPdfPoint(viewX, viewY);
+		return {
+			position: { pageIndex, rects: [[x0 - half, y0 - half, x0 + half, y0 + half]] },
+			pageLabel: this.view._getPageLabel?.(pageIndex, true) || String(pageIndex + 1),
+			anchor: page.top + lineAt(viewY) * LINE_HEIGHT,
+		};
+	}
+
+	/** The strip line an outline heading belongs to (see anchorOf()). */
+	headingAnchor(heading) {
+		const page = this.pageBox(heading.pageIndex);
+		if (!page?.viewport) return null;
+		const [, y] = page.viewport.convertToViewportPoint(heading.x, heading.y);
+		return page.top + lineAt(Math.min(Math.max(y, 0), page.height - 1)) * LINE_HEIGHT;
+	}
+
+	/**
+	 * Zotero's sort index for an outline heading, so that it can be ordered
+	 * among the annotations. Exact once the page's text is known
+	 * (ensurePageText()); until then by the heading's height on its page.
+	 */
+	headingSortIndex(heading) {
+		const position = {
+			pageIndex: heading.pageIndex,
+			rects: [[heading.x, heading.y, heading.x, heading.y]],
+		};
+		if (this.view._pdfPages?.[heading.pageIndex]) {
+			return getSortIndex(this.view._pdfPages, position);
+		}
+		const viewBox = this._pageView(heading.pageIndex)?.viewport?.viewBox;
+		const top = viewBox ? viewBox[3] - heading.y : 0;
+		return sortIndexOf(heading.pageIndex, 0, top);
+	}
+
+	/**
+	 * Have the PDF view read the document's outline, as it does when the
+	 * outline tab of the reader's sidebar is opened. The result arrives in
+	 * the reader's state (`outline`).
+	 */
+	loadOutline() {
+		try {
+			Promise.resolve(this.view.setSidebarView?.("outline")).catch((e) => {
+				console.warn("[ZotFlow Evo] Could not read the PDF's outline:", e);
+			});
+		}
+		catch (e) {
+			console.warn("[ZotFlow Evo] Could not read the PDF's outline:", e);
+		}
+	}
+
+	/** Whether the page's text has been read (headingSortIndex() is exact). */
+	hasPageText(pageIndex) {
+		return !!this.view._pdfPages?.[pageIndex];
+	}
+
+	/** Have the PDF view read a page's text. Resolves when it is there. */
+	async ensurePageText(pageIndex) {
+		await this.view._ensureBasicPageData?.(pageIndex);
+	}
+
 	/**
 	 * A point in the strip document, as the reader's own document sees it
 	 * (for the context menu, which the reader draws in its document).
@@ -568,8 +666,7 @@ export class EvoStripHost {
 	 */
 	reveal(top, bottom, margin = LINE_HEIGHT) {
 		if (this._collapsed || this._destroyed) return;
-		const banner = this.banner.textContent ? BANNER_HEIGHT : 0;
-		const from = this.container.scrollTop + banner + margin;
+		const from = this.container.scrollTop + this._headHeight + margin;
 		const to = this.container.scrollTop + this.container.clientHeight - margin;
 		let delta = 0;
 		if (bottom > to) delta = Math.min(bottom - to, top - from);
@@ -605,7 +702,9 @@ export class EvoStripHost {
 			this.win.removeEventListener(type, this._onPointerEnd, true);
 		}
 		this._pointerWaiters = [];
+		this._headObserver.disconnect();
 		unfollowTheme(this.stripDoc);
+		unfollowTheme(this.headDoc);
 		const root = this.doc.documentElement;
 		const wasVisible = root.classList.contains(ON_CLASS);
 		root.classList.remove(ON_CLASS, ANCHORED_CLASS, "zf-evo-strip-timeline");

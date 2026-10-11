@@ -7,13 +7,16 @@
  * FORK.md in the plugin repository (pad-mac/zotflow-evo).
  */
 
+import { ObsidianBridge } from "./obsidian-adapter";
+
 const RESOLVED_STYLE_ID = "zf-evo-resolved-vars";
 const TOOLBAR_HIDDEN_CLASS = "zf-evo-toolbar-hidden";
 
-/** Reader state key read by `common/components/reader-ui.js`. */
-export const SUPPRESS_ANNOTATION_POPUP_STATE = "zfEvoSuppressAnnotationPopup";
-
-/** Reader state key holding the note strip's settings (`evo/note-strip.js`). */
+/**
+ * Reader state key holding the note strip's settings (`evo/note-strip.js`).
+ * `common/components/reader-ui.js` reads it too: while the strip is shown the
+ * comment popup is not opened.
+ */
 export const NOTE_STRIP_STATE = "zfEvoStrip";
 
 /**
@@ -286,6 +289,9 @@ function syncThemeFollower(doc, { ownClass, after }) {
 	const to = doc.documentElement;
 	if (!to) return;
 	to.className = `${from.className} ${ownClass}`.trim();
+	// The build writes direction-dependent rules as `html[dir="ltr"] …`.
+	to.setAttribute("dir", from.getAttribute("dir") || "ltr");
+	if (from.lang) to.lang = from.lang;
 	for (const name of Array.from(to.attributes, attr => attr.name)) {
 		if (name.startsWith("data-") && !from.hasAttribute(name)) to.removeAttribute(name);
 	}
@@ -332,18 +338,9 @@ export function applyToolbarHidden(hidden) {
 }
 
 /**
- * Stop the comment popup from opening next to an annotation. The reader
- * keeps tracking which annotation the popup belongs to; only the popup is
- * not rendered, exactly as upstream does while the annotations sidebar is
- * open.
- */
-export function applyAnnotationPopupSuppressed(reader, suppressed) {
-	reader?._updateState?.({ [SUPPRESS_ANNOTATION_POPUP_STATE]: !!suppressed });
-}
-
-/**
  * Settings of the note strip beside the PDF: `{ visible, collapsed, width,
- * banner }`. Merged into what is already set, so one field can change alone.
+ * banner, highlights }`. Merged into what is already set, so one field can
+ * change alone.
  */
 export function applyNoteStrip(reader, settings) {
 	if (!reader?._updateState) return;
@@ -361,6 +358,21 @@ export function applyNoteStrip(reader, settings) {
 		catch (e) {
 			console.warn("[ZotFlow Evo] Could not redraw the pages:", e);
 		}
+	}
+}
+
+/**
+ * A strip setting changed in the strip itself (the "highlights" button):
+ * apply it here and tell the plugin, which keeps it and passes it on to the
+ * other open readers.
+ */
+export function reportNoteStrip(reader, settings) {
+	applyNoteStrip(reader, settings);
+	try {
+		ObsidianBridge?.handleEvent?.({ type: "noteStripChanged", settings });
+	}
+	catch (e) {
+		console.warn("[ZotFlow Evo] Could not report a note strip setting:", e);
 	}
 }
 

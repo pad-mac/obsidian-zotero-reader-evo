@@ -2,15 +2,20 @@
  * ZotFlow Evo — the note strip: the comments of a PDF, beside the pages.
  *
  * Rendered by the reader's React tree (one line in reader-ui.js) into the
- * strip's own document, which `strip-host.js` creates inside the PDF view
- * and keeps level with the pages. Where each comment goes is decided in
- * `strip-layout.mjs`.
+ * strip's own documents, which `strip-host.js` creates inside the PDF view:
+ * a pinned head (title line, buttons, colour filters) and the strip itself.
+ * What is listed, and in what order, is decided in `strip-layout.mjs`.
  *
- * What the strip shows is what Zotero stores:
- *  - the comment of a highlight (or underline, image, ink) — one bar in the
- *    annotation's colour;
- *  - a note annotation, i.e. a comment placed on the page — two bars.
- * A highlight without a comment appears only while it is selected.
+ * The strip shows what Zotero stores:
+ *  - comments — of a highlight, underline, image or ink annotation, and note
+ *    annotations — each with two bars in the annotation's colour;
+ *  - with "highlights" switched on, what was marked on the page as well: the
+ *    full text of each highlight, with one bar;
+ *  - the PDF's outline, as plain headings between them.
+ *
+ * It has two modes. As a list (the default) it is a column of its own, like
+ * the reader's annotations sidebar. Anchored, every entry sits beside its
+ * place on the page and the strip scrolls with the pages.
  */
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
@@ -18,26 +23,24 @@ import { createPortal } from "react-dom";
 import cx from "classnames";
 import { ObsidianBridge } from "../obsidian-adapter";
 import { ANNOTATION_COLORS } from "../common/defines";
-import { NOTE_STRIP_STATE, applyNoteStrip } from "../obsidian-evo";
+import { NOTE_STRIP_STATE, applyNoteStrip, reportNoteStrip } from "../obsidian-evo";
 import { EvoStripHost } from "./strip-host";
-import { estimateHeight, layoutCards } from "./strip-layout.mjs";
+import {
+	buildEntries, estimateHeight, flattenOutline, layoutCards, pageStartSlot, usedColors, LINE_HEIGHT,
+} from "./strip-layout.mjs";
 
-/** Comments this far above and below the visible part are rendered too. */
+/** Entries this far above and below the visible part are rendered too (anchored mode). */
 const OVERSCAN = 1500;
 
-/** The set of rendered comments is reconsidered every this many pixels of scrolling. */
+/** The set of rendered entries is reconsidered every this many pixels of scrolling. */
 const SCROLL_STEP = 400;
 
 /** Wait for the click that selected an annotation to finish before taking the focus. */
 const FOCUS_DELAY = 60;
 
-const WITH_COMMENT = new Set(["highlight", "underline", "note", "image", "ink"]);
-const DEFAULT_NOTE_COLOR = ANNOTATION_COLORS[0][1];
-
-function isShown(annotation, activeId) {
-	if (annotation._hidden || !WITH_COMMENT.has(annotation.type)) return false;
-	return annotation.type === "note" || !!annotation.comment || annotation.id === activeId;
-}
+const PALETTE = ANNOTATION_COLORS.map(([, color]) => color.toLowerCase());
+const COLOR_NAMES = new Map(ANNOTATION_COLORS.map(([name, color]) => [color.toLowerCase(), name.replace("general-", "")]));
+const DEFAULT_NOTE_COLOR = PALETTE[0];
 
 /* ------------------------------------------------------------------ *
  * Editing and showing a comment
@@ -258,36 +261,57 @@ function StripPreview({ text, lazy }) {
 }
 
 /* ------------------------------------------------------------------ *
- * One comment
+ * One entry
  * ------------------------------------------------------------------ */
 
+/** What was marked on the page: the highlighted text, or the picture. */
+function Marked({ annotation }) {
+	if (annotation.type === "image" || annotation.type === "ink") {
+		return annotation.image
+			? <img className="zf-evo-image" src={annotation.image} alt="" draggable={false}/>
+			: <span className="zf-evo-faint">{annotation.type === "image" ? "Image" : "Drawing"}</span>;
+	}
+	return annotation.text || <span className="zf-evo-faint">No text</span>;
+}
+
 function Card({
-	annotation, place, active, list, focusToken, readOnly, host,
+	entry, place, active, list, focusToken, readOnly, host,
 	onActivate, onDeactivate, onChange, onMeasure, onColor, onMenu, onLeave,
 }) {
+	const { annotation, parts } = entry;
 	const rootRef = useRef();
 	const innerRef = useRef();
+	const pageRef = useRef();
 	const isNote = annotation.type === "note";
-	const editable = active && !readOnly && !annotation.readOnly;
+	const editable = active && parts.comment && !readOnly && !annotation.readOnly;
 
+	// Anchored, the layout needs every entry's real height.
 	useLayoutEffect(() => {
+		if (list) return undefined;
 		const inner = innerRef.current;
-		const report = () => onMeasure(annotation.id, inner.offsetHeight);
+		const report = () => onMeasure(entry.id, inner.offsetHeight);
 		report();
 		const observer = new inner.ownerDocument.defaultView.ResizeObserver(report);
 		observer.observe(inner);
 		return () => observer.disconnect();
-	}, [annotation.id, onMeasure]);
+	}, [entry.id, list, onMeasure]);
+
+	// The first line is indented by the width of the page number in front of
+	// it; the lines after it start underneath the number.
+	useLayoutEffect(() => {
+		const width = pageRef.current?.offsetWidth || 0;
+		rootRef.current.style.setProperty("--zf-evo-indent", (width ? width + 6 : 0) + "px");
+	}, [annotation.pageLabel]);
 
 	function handleBlur(event) {
 		if (!active) return;
 		const root = rootRef.current;
 		if (event.relatedTarget && root.contains(event.relatedTarget)) return;
 		const doc = root.ownerDocument;
-		// After the focus has settled: it may only have moved within the comment.
+		// After the focus has settled: it may only have moved within the entry.
 		doc.defaultView.setTimeout(() => {
 			if (!root.isConnected || !doc.hasFocus() || !root.contains(doc.activeElement)) {
-				onDeactivate(annotation.id);
+				onDeactivate(entry.id);
 			}
 		}, 0);
 	}
@@ -297,16 +321,17 @@ function Card({
 		onActivate(annotation, event);
 	}
 
-	function handleDragStart(event) {
-		if (annotation._draft || active) {
+	function startDrag(event, source) {
+		if (annotation._draft || (active && source === "comment")) {
 			event.preventDefault();
 			return;
 		}
+		event.stopPropagation();
 		event.dataTransfer.effectAllowed = "copy";
-		// The same payload a dragged annotation carries, marked as a comment
-		// so the plugin formats the drop with the comment templates.
+		// The payload a dragged annotation carries. Marked as a comment, the
+		// plugin drops the comment; otherwise the highlighted text.
 		ObsidianBridge.handleSetDataTransferAnnotations(
-			event.dataTransfer, [annotation], false, { evoSource: "comment" }
+			event.dataTransfer, [annotation], false, source === "comment" ? { evoSource: "comment" } : undefined
 		);
 	}
 
@@ -327,52 +352,166 @@ function Card({
 		<div
 			ref={rootRef}
 			className={cx("zf-evo-card", {
-				"is-note": isNote,
 				"is-active": active,
 				"is-clamped": !active && !list && place?.clamped,
 			})}
 			style={style}
+			data-entry-id={entry.id}
 			data-annotation-id={annotation._draft ? undefined : annotation.id}
-			draggable={!active && !annotation._draft}
 			onClick={handleClick}
 			onBlur={handleBlur}
-			onDragStart={handleDragStart}
 			onContextMenu={handleContextMenu}
 		>
-			<span className="zf-evo-bars" aria-hidden="true">
-				<span className="zf-evo-bar"/>
-				{isNote && <span className="zf-evo-bar"/>}
-			</span>
-			<span className="zf-evo-page" aria-hidden="true">{annotation.pageLabel || ""}</span>
+			<span className="zf-evo-page" aria-hidden="true" ref={pageRef}>{annotation.pageLabel || ""}</span>
 			<div className="zf-evo-card-clip">
 				<div className="zf-evo-card-inner" ref={innerRef}>
-					{editable
-						? (
-							<StripEditor
-								id={annotation.id}
-								text={annotation.comment}
-								focusToken={focusToken}
-								host={host}
-								onChange={text => onChange(annotation.id, text)}
-								onEscape={onLeave}
-							/>
-						)
-						: <StripPreview text={annotation.comment} lazy={list}/>}
-					{editable && isNote && (
-						<div className="zf-evo-palette" role="group" aria-label="Note colour">
-							{ANNOTATION_COLORS.map(([name, color]) => (
-								<button
-									key={color}
-									type="button"
-									className={cx("zf-evo-swatch", { "is-current": color === annotation.color })}
-									style={{ "--zf-evo-color": color }}
-									title={name.replace("general-", "")}
-									onClick={() => onColor(annotation.id, color)}
-								/>
-							))}
+					{parts.highlight && (
+						<div
+							className="zf-evo-row is-highlight is-first"
+							draggable={!annotation._draft}
+							onDragStart={event => startDrag(event, "highlight")}
+						>
+							<span className="zf-evo-bars" aria-hidden="true">
+								<span className="zf-evo-bar"/>
+							</span>
+							<div className="zf-evo-quote"><Marked annotation={annotation}/></div>
+						</div>
+					)}
+					{parts.comment && (
+						<div
+							className={cx("zf-evo-row is-comment", { "is-first": !parts.highlight })}
+							draggable={!active && !annotation._draft}
+							onDragStart={event => startDrag(event, "comment")}
+						>
+							<span className="zf-evo-bars" aria-hidden="true">
+								<span className="zf-evo-bar"/>
+								<span className="zf-evo-bar"/>
+							</span>
+							{editable
+								? (
+									<StripEditor
+										id={annotation.id}
+										text={annotation.comment}
+										focusToken={focusToken}
+										host={host}
+										onChange={text => onChange(annotation.id, text)}
+										onEscape={onLeave}
+									/>
+								)
+								: <StripPreview text={annotation.comment} lazy={list}/>}
+							{editable && isNote && (
+								<div className="zf-evo-palette" role="group" aria-label="Note colour">
+									{PALETTE.map((color, index) => (
+										<button
+											key={color}
+											type="button"
+											className={cx("zf-evo-swatch", { "is-current": color === String(annotation.color || "").toLowerCase() })}
+											style={{ "--zf-evo-color": color }}
+											title={`${COLOR_NAMES.get(color)} (Alt+${index + 1})`}
+											onClick={() => onColor(annotation.id, color)}
+										/>
+									))}
+								</div>
+							)}
 						</div>
 					)}
 				</div>
+			</div>
+		</div>
+	);
+}
+
+function Heading({ entry, place, list, onOpen }) {
+	const { heading } = entry;
+	return (
+		<div
+			className="zf-evo-heading"
+			style={!list && place ? { top: place.top, height: place.height } : undefined}
+			data-entry-id={entry.id}
+			data-depth={heading.depth}
+			title={heading.title}
+			onClick={list ? () => onOpen(heading) : undefined}
+		>
+			{heading.title}
+		</div>
+	);
+}
+
+/* ------------------------------------------------------------------ *
+ * The head: title line, buttons, colour filters
+ * ------------------------------------------------------------------ */
+
+function IconHighlights() {
+	return (
+		<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+			<rect x="1.5" y="3" width="13" height="4" rx="1" fill="currentColor" opacity="0.35"/>
+			<rect x="1.5" y="9" width="9" height="4" rx="1" fill="currentColor" opacity="0.35"/>
+			<path d="M3 5h10M3 11h6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" fill="none"/>
+		</svg>
+	);
+}
+
+function IconPlus() {
+	return (
+		<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+			<path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" fill="none"/>
+		</svg>
+	);
+}
+
+function StripHead({ annotations, settings, colors, readOnly, onToggleColor, onToggleHighlights, onNewNote }) {
+	const swatches = useMemo(() => {
+		const used = usedColors(annotations, PALETTE);
+		// A chosen colour stays on offer after its last annotation is gone,
+		// so the filter can still be taken off.
+		for (const color of colors) {
+			if (!used.includes(color)) used.push(color);
+		}
+		return used;
+	}, [annotations, colors]);
+	const showHighlights = !!settings.highlights;
+	return (
+		<div className="zf-evo-head">
+			{settings.banner && <div className="zf-evo-head-title" title={settings.banner}>{settings.banner}</div>}
+			<div className="zf-evo-head-tools">
+				<button
+					type="button"
+					className={cx("zf-evo-tool", { "is-on": showHighlights })}
+					title={showHighlights ? "Hide highlights" : "Show highlights"}
+					aria-pressed={showHighlights}
+					data-tool="highlights"
+					onClick={onToggleHighlights}
+				>
+					<IconHighlights/>
+				</button>
+				{!readOnly && (
+					<button
+						type="button"
+						className="zf-evo-tool"
+						title="New note on this page"
+						data-tool="new-note"
+						onClick={onNewNote}
+					>
+						<IconPlus/>
+					</button>
+				)}
+				<span className="zf-evo-filters" role="group" aria-label="Show only these colours">
+					{swatches.map(color => (
+						<button
+							key={color}
+							type="button"
+							className={cx("zf-evo-swatch", {
+								"is-current": colors.has(color),
+								"is-dimmed": colors.size > 0 && !colors.has(color),
+							})}
+							style={{ "--zf-evo-color": color }}
+							title={`Only ${COLOR_NAMES.get(color) || color}`}
+							aria-pressed={colors.has(color)}
+							data-color={color}
+							onClick={() => onToggleColor(color)}
+						/>
+					))}
+				</span>
 			</div>
 		</div>
 	);
@@ -382,9 +521,13 @@ function Card({
  * The strip
  * ------------------------------------------------------------------ */
 
-function Strip({ host, state, settings, onUpdateAnnotations, onSelectAnnotations, onOpenAnnotationContextMenu }) {
+function Strip({
+	host, state, settings, colors, actions,
+	onUpdateAnnotations, onSelectAnnotations, onOpenAnnotationContextMenu, onNavigate,
+}) {
 	const reader = window._reader;
 	const collapsed = !!settings.collapsed;
+	const showHighlights = !!settings.highlights;
 	const readOnly = !!state.readOnly;
 	const [tick, bump] = useReducer(n => n + 1, 0);
 	const [scrollSlot, setScrollSlot] = useState(0);
@@ -408,9 +551,6 @@ function Strip({ host, state, settings, onUpdateAnnotations, onSelectAnnotations
 	useEffect(() => {
 		host.setCollapsed(collapsed);
 	}, [host, collapsed]);
-	useEffect(() => {
-		host.setBanner(settings.banner);
-	}, [host, settings.banner]);
 
 	useEffect(() => host.on((event) => {
 		if (event.type === "geometry") bump();
@@ -439,14 +579,15 @@ function Strip({ host, state, settings, onUpdateAnnotations, onSelectAnnotations
 		if (draftRef.current?.id === id) endDraft();
 	}, [endDraft]);
 
-	// Selecting an annotation on the page opens its line in the strip.
+	// Selecting an annotation on the page opens its comment in the strip.
 	const selected = state.selectedAnnotationIDs;
 	useEffect(() => {
 		if (selected.length === 1) {
 			const id = selected[0];
 			if (id === activeRef.current || id === draftRef.current?.createdId) return;
 			const annotation = reader._state.annotations.find(x => x.id === id);
-			if (!annotation || !WITH_COMMENT.has(annotation.type)) return;
+			if (!annotation || readOnly || annotation.readOnly) return;
+			if (!["highlight", "underline", "note", "image", "ink"].includes(annotation.type)) return;
 			if (draftRef.current) endDraft();
 			activate(id);
 		}
@@ -458,8 +599,8 @@ function Strip({ host, state, settings, onUpdateAnnotations, onSelectAnnotations
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [selected]);
 
-	// The strip does not scroll by itself, so the pages are scrolled to keep
-	// the cursor of the open comment in view.
+	// Anchored, the strip does not scroll by itself, so the pages are
+	// scrolled to keep the cursor of the open comment in view.
 	useEffect(() => {
 		if (!activeId || collapsed) return undefined;
 		const doc = host.stripDoc;
@@ -472,7 +613,7 @@ function Strip({ host, state, settings, onUpdateAnnotations, onSelectAnnotations
 				// No cursor position to ask for: follow the end of the text.
 				if (box.selectionEnd !== box.value.length) return;
 				const all = box.getBoundingClientRect();
-				rect = { top: all.bottom - 20, bottom: all.bottom };
+				rect = { top: all.bottom - LINE_HEIGHT, bottom: all.bottom };
 			}
 			else {
 				const selection = doc.getSelection();
@@ -491,6 +632,13 @@ function Strip({ host, state, settings, onUpdateAnnotations, onSelectAnnotations
 		};
 		doc.addEventListener("selectionchange", follow);
 		return () => doc.removeEventListener("selectionchange", follow);
+	}, [activeId, collapsed, host]);
+
+	// As a list, the strip scrolls by itself: bring the opened entry into view.
+	useEffect(() => {
+		if (!activeId || !collapsed) return;
+		const el = host.stripDoc.querySelector(`[data-entry-id="${CSS.escape(activeId)}"]`);
+		el?.scrollIntoView({ block: "nearest" });
 	}, [activeId, collapsed, host]);
 
 	const handleMeasure = useCallback((id, height) => {
@@ -529,24 +677,46 @@ function Strip({ host, state, settings, onUpdateAnnotations, onSelectAnnotations
 	}, [onUpdateAnnotations, reader]);
 
 	const handleColor = useCallback((id, color) => {
-		noteColor.current = color;
 		const current = draftRef.current;
 		if (current && current.id === id) {
+			noteColor.current = color;
 			if (current.createdId) onUpdateAnnotations([{ id: current.createdId, color }]);
 			setDraft({ ...current, color });
 			return;
 		}
+		const annotation = reader._state.annotations.find(x => x.id === id);
+		if (!annotation || annotation.readOnly) return;
+		if (annotation.type === "note") noteColor.current = color;
 		onUpdateAnnotations([{ id, color }]);
-	}, [onUpdateAnnotations]);
+	}, [onUpdateAnnotations, reader]);
+
+	// Alt+1 … Alt+8 give the open entry the first … eighth colour.
+	useEffect(() => {
+		const doc = host.stripDoc;
+		const onKeyDown = (event) => {
+			if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+			const match = /^(?:Digit|Numpad)([1-8])$/.exec(event.code || "");
+			const id = activeRef.current;
+			if (!match || !id || readOnly) return;
+			// Also keeps the character Alt+digit types on some keyboards out
+			// of the comment.
+			event.preventDefault();
+			event.stopPropagation();
+			handleColor(id, PALETTE[Number(match[1]) - 1]);
+		};
+		doc.addEventListener("keydown", onKeyDown, true);
+		return () => doc.removeEventListener("keydown", onKeyDown, true);
+	}, [host, handleColor, readOnly]);
 
 	const handleActivate = useCallback((annotation, event) => {
 		if (annotation._draft) return;
 		if (draftRef.current) endDraft();
-		// Anchored, the annotation is already beside its comment; in the list
-		// the page is brought to it.
+		// Anchored, the annotation is already beside its entry; as a list the
+		// page is brought to it.
 		onSelectAnnotations([annotation.id], !collapsed, event);
+		if (readOnly || annotation.readOnly) return;
 		activate(annotation.id);
-	}, [activate, collapsed, endDraft, onSelectAnnotations]);
+	}, [activate, collapsed, endDraft, onSelectAnnotations, readOnly]);
 
 	const handleMenu = useCallback((annotation, event) => {
 		const { x, y } = host.toReaderPoint(event.clientX, event.clientY);
@@ -555,11 +725,12 @@ function Strip({ host, state, settings, onUpdateAnnotations, onSelectAnnotations
 
 	const handleLeave = useCallback(() => host.focusView(), [host]);
 
-	// A click on an empty line starts a note there.
-	function handleStripClick(event) {
-		if (event.target !== event.currentTarget || collapsed || readOnly) return;
-		const spot = host.spotAt(event.clientY);
-		if (!spot) return;
+	const handleHeading = useCallback((heading) => {
+		onNavigate(heading.location);
+	}, [onNavigate]);
+
+	const startDraft = useCallback((spot) => {
+		if (!spot || readOnly) return;
 		if (draftRef.current) endDraft();
 		// The note being written is the only thing in hand.
 		if (reader._state.selectedAnnotationIDs.length) onSelectAnnotations([], true);
@@ -577,47 +748,113 @@ function Strip({ host, state, settings, onUpdateAnnotations, onSelectAnnotations
 			createdId: null,
 		});
 		activate(id);
+	}, [activate, endDraft, onSelectAnnotations, reader, readOnly]);
+
+	// A note for the page being read: stored at the start of that page, after
+	// the notes already there.
+	const startPageNote = useCallback(() => {
+		const pageIndex = host.currentPageIndex;
+		const { slot, sortIndex } = pageStartSlot(pageIndex, reader._state.annotations);
+		const spot = host.pageStartSpot(pageIndex, slot);
+		if (spot) startDraft({ ...spot, sortIndex });
+	}, [host, reader, startDraft]);
+	actions.current.newNote = startPageNote;
+
+	// A click on empty space starts a note: anchored, on the line clicked;
+	// as a list, for the page being read.
+	function handleStripClick(event) {
+		if (event.target !== event.currentTarget || readOnly) return;
+		if (collapsed) startPageNote();
+		else startDraft(host.spotAt(event.clientY));
 	}
+
+	// The outline. The reader reads it only when its own outline tab is
+	// opened (`null` until then), so ask for it; and have the page texts
+	// read that put its headings in order among the annotations.
+	const outlineAsked = useRef(false);
+	useEffect(() => {
+		if (state.outline !== null || outlineAsked.current) return;
+		outlineAsked.current = true;
+		host.loadOutline();
+	}, [state.outline, host]);
+	const headings = useMemo(() => flattenOutline(state.outline), [state.outline]);
+	useEffect(() => {
+		let cancelled = false;
+		const pages = [...new Set(headings.map(heading => heading.pageIndex))]
+			.filter(pageIndex => !host.hasPageText(pageIndex));
+		if (!pages.length) return undefined;
+		(async () => {
+			let done = 0;
+			for (const pageIndex of pages) {
+				if (cancelled) return;
+				try {
+					await host.ensurePageText(pageIndex);
+				}
+				catch {
+					// That heading keeps its rough place.
+				}
+				if (++done % 10 === 0 && !cancelled) bump();
+			}
+			if (!cancelled) bump();
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [headings, host]);
 
 	const annotations = state.annotations;
 	const model = useMemo(() => {
+		const entries = buildEntries({
+			annotations,
+			headings: headings.map(heading => ({ ...heading, sortIndex: host.headingSortIndex(heading) })),
+			draft,
+			activeId,
+			showHighlights,
+			colors,
+		});
+		if (collapsed) return { entries, placed: null };
+		// Anchored: every entry on its line, beside its place on the page.
 		const items = [];
-		const pages = new Map();
-		for (const annotation of annotations) {
-			if (!isShown(annotation, activeId)) continue;
-			// While a note is being typed its card is the draft's.
-			if (draft?.createdId === annotation.id) continue;
-			const anchor = collapsed ? 0 : host.anchorOf(annotation, pages);
-			if (anchor === null) continue;
-			items.push({ id: annotation.id, annotation, anchor });
+		for (const entry of entries) {
+			let anchor;
+			if (entry.kind === "heading") anchor = host.headingAnchor(entry.heading);
+			else if (entry.annotation._draft) anchor = entry.annotation.anchor;
+			else anchor = host.anchorOf(entry.annotation);
+			if (anchor === null || anchor === undefined) continue;
+			entry.anchor = anchor;
+			if (entry.kind === "heading") {
+				entry.natural = LINE_HEIGHT;
+			}
+			else {
+				const text = [entry.parts.highlight && entry.annotation.text, entry.parts.comment && entry.annotation.comment]
+					.filter(Boolean).join("\n");
+				entry.natural = heights.current.get(entry.id) ?? estimateHeight(text, host.width);
+			}
+			items.push(entry);
 		}
-		if (draft) items.push({ id: draft.id, annotation: draft, anchor: collapsed ? 0 : draft.anchor });
-		items.sort((a, b) => a.anchor - b.anchor
-			|| (a.annotation.sortIndex || "").localeCompare(b.annotation.sortIndex || ""));
-		for (const item of items) {
-			item.natural = heights.current.get(item.id)
-				?? estimateHeight(item.annotation.comment, host.width);
-		}
-		return { items, placed: collapsed ? null : layoutCards(items) };
-		// `tick` stands for what the host measures (page positions, zoom) and
-		// for the comment heights in `heights`, neither of which React sees.
+		items.sort((a, b) => a.anchor - b.anchor || (a.sortIndex < b.sortIndex ? -1 : a.sortIndex > b.sortIndex ? 1 : 0));
+		return { entries: items, placed: layoutCards(items) };
+		// `tick` stands for what the host measures (page positions, zoom, page
+		// texts) and for the heights in `heights`, none of which React sees.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [annotations, activeId, draft, collapsed, tick, host]);
+	}, [annotations, headings, activeId, draft, collapsed, showHighlights, colors, tick, host]);
 
-	// Only the comments near the visible part are rendered. `scrollSlot`
-	// changes every SCROLL_STEP pixels of scrolling, which is when the set is
-	// looked at again.
+	// Anchored, only the entries near the visible part are rendered.
+	// `scrollSlot` changes every SCROLL_STEP pixels of scrolling, which is
+	// when the set is looked at again.
 	const visible = useMemo(() => {
-		if (collapsed) return model.items;
+		if (collapsed) return model.entries;
 		const from = host.scrollTop - OVERSCAN;
 		const to = host.scrollTop + host.clientHeight + OVERSCAN;
-		return model.items.filter((item) => {
-			if (item.id === activeId) return true;
-			const place = model.placed.get(item.id);
-			return place.top + Math.max(place.height, item.natural) >= from && place.top <= to;
+		return model.entries.filter((entry) => {
+			if (entry.id === activeId) return true;
+			const place = model.placed.get(entry.id);
+			return place.top + Math.max(place.height, entry.natural) >= from && place.top <= to;
 		});
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- scrollSlot is the trigger
 	}, [model, collapsed, activeId, host, scrollSlot]);
+
+	const nothing = collapsed && !visible.some(entry => entry.kind === "annotation");
 
 	return (
 		<div
@@ -625,27 +862,92 @@ function Strip({ host, state, settings, onUpdateAnnotations, onSelectAnnotations
 			style={collapsed ? undefined : { height: host.contentHeight }}
 			onClick={handleStripClick}
 		>
-			{collapsed && !visible.length && <div className="zf-evo-empty">No comments yet</div>}
-			{visible.map(item => (
-				<Card
-					key={item.id}
-					annotation={item.annotation}
-					place={model.placed?.get(item.id)}
-					active={item.id === activeId}
-					list={collapsed}
-					focusToken={item.id === activeId ? focusToken : 0}
-					readOnly={readOnly}
-					host={host}
-					onActivate={handleActivate}
-					onDeactivate={deactivate}
-					onChange={handleChange}
-					onMeasure={handleMeasure}
-					onColor={handleColor}
-					onMenu={handleMenu}
-					onLeave={handleLeave}
-				/>
-			))}
+			{visible.map(entry => (entry.kind === "heading"
+				? (
+					<Heading
+						key={entry.id}
+						entry={entry}
+						place={model.placed?.get(entry.id)}
+						list={collapsed}
+						onOpen={handleHeading}
+					/>
+				)
+				: (
+					<Card
+						key={entry.id}
+						entry={entry}
+						place={model.placed?.get(entry.id)}
+						active={entry.id === activeId}
+						list={collapsed}
+						focusToken={entry.id === activeId ? focusToken : 0}
+						readOnly={readOnly}
+						host={host}
+						onActivate={handleActivate}
+						onDeactivate={deactivate}
+						onChange={handleChange}
+						onMeasure={handleMeasure}
+						onColor={handleColor}
+						onMenu={handleMenu}
+						onLeave={handleLeave}
+					/>
+				)))}
+			{nothing && (
+				<div className="zf-evo-empty">
+					{colors.size
+						? "Nothing in this colour."
+						: readOnly ? "No comments." : "No comments yet. Click here to write a note for this page."}
+				</div>
+			)}
 		</div>
+	);
+}
+
+/** The head and the strip, which share the colour filter. */
+function StripRoot({ host, state, settings, ...handlers }) {
+	const [colors, setColors] = useState(() => new Set());
+	const actions = useRef({});
+
+	const toggleColor = useCallback((color) => {
+		setColors((current) => {
+			const next = new Set(current);
+			if (!next.delete(color)) next.add(color);
+			return next;
+		});
+	}, []);
+
+	const toggleHighlights = useCallback(() => {
+		// Kept by the plugin, so it holds for the next PDF too.
+		reportNoteStrip(window._reader, { highlights: !settings.highlights });
+	}, [settings.highlights]);
+
+	const newNote = useCallback(() => actions.current.newNote?.(), []);
+
+	return (
+		<>
+			{createPortal(
+				<StripHead
+					annotations={state.annotations}
+					settings={settings}
+					colors={colors}
+					readOnly={!!state.readOnly}
+					onToggleColor={toggleColor}
+					onToggleHighlights={toggleHighlights}
+					onNewNote={newNote}
+				/>,
+				host.headMount
+			)}
+			{createPortal(
+				<Strip
+					host={host}
+					state={state}
+					settings={settings}
+					colors={colors}
+					actions={actions}
+					{...handlers}
+				/>,
+				host.mount
+			)}
+		</>
 	);
 }
 
@@ -681,7 +983,7 @@ function useStripHost(view) {
 
 /**
  * Rendered once by ReaderUI. Draws nothing in the reader's own document:
- * the strip is a portal into its document inside the PDF view.
+ * the strip is drawn through portals into its documents inside the PDF view.
  */
 export default function EvoNoteStrip(props) {
 	const settings = props.state[NOTE_STRIP_STATE];
@@ -690,15 +992,15 @@ export default function EvoNoteStrip(props) {
 		: null;
 	const host = useStripHost(view);
 	if (!host || !settings?.visible) return null;
-	return createPortal(
-		<Strip
+	return (
+		<StripRoot
 			host={host}
 			state={props.state}
 			settings={settings}
 			onUpdateAnnotations={props.onUpdateAnnotations}
 			onSelectAnnotations={props.onSelectAnnotations}
 			onOpenAnnotationContextMenu={props.onOpenAnnotationContextMenu}
-		/>,
-		host.mount
+			onNavigate={props.onNavigate}
+		/>
 	);
 }

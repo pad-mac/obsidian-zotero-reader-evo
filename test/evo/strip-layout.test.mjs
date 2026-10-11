@@ -71,3 +71,131 @@ test("estimateHeight grows with the text", () => {
 	assert.ok(estimateHeight("x".repeat(400), 320) > estimateHeight("x".repeat(40), 320));
 	assert.equal(estimateHeight("a\nb\nc", 320), 3 * L);
 });
+
+/* ---------------------------- entries ---------------------------- */
+
+import {
+	annotationParts, buildEntries, flattenOutline, pageStartSlot, sortIndexOf, usedColors,
+} from "../../src/evo/strip-layout.mjs";
+
+const hl = (id, sortIndex, extra = {}) => ({ id, type: "highlight", color: "#ffd400", comment: "", text: "t " + id, sortIndex, ...extra });
+const note = (id, sortIndex, extra = {}) => ({ id, type: "note", color: "#ff6666", comment: "n " + id, sortIndex, ...extra });
+const ids = entries => entries.map(entry => entry.id);
+
+test("without highlights: notes, and highlights that have a comment or are open", () => {
+	const annotations = [
+		hl("bare", "00000|000010|00100"),
+		hl("commented", "00000|000020|00200", { comment: "c" }),
+		note("placed", "00000|000030|00300"),
+		{ id: "typed", type: "text", sortIndex: "00000|000001|00010", comment: "on the page" },
+		hl("hidden", "00000|000005|00050", { comment: "c", _hidden: true }),
+	];
+	assert.deepEqual(ids(buildEntries({ annotations })), ["commented", "placed"]);
+	assert.deepEqual(ids(buildEntries({ annotations, activeId: "bare" })), ["bare", "commented", "placed"]);
+	assert.deepEqual(annotationParts(annotations[0], { activeId: "bare" }), { highlight: false, comment: true });
+});
+
+test("with highlights: every highlight, its comment part only when there is one", () => {
+	const annotations = [hl("bare", "00000|000010|00100"), hl("commented", "00000|000020|00200", { comment: "c" }), note("placed", "00000|000030|00300")];
+	const entries = buildEntries({ annotations, showHighlights: true });
+	assert.deepEqual(ids(entries), ["bare", "commented", "placed"]);
+	assert.deepEqual(entries.map(entry => entry.parts), [
+		{ highlight: true, comment: false },
+		{ highlight: true, comment: true },
+		{ highlight: false, comment: true },
+	]);
+});
+
+test("entries follow Zotero's sort index, not the order they arrive in", () => {
+	const annotations = [
+		note("p2", "00001|000000|00000"),
+		hl("p1-late", "00000|000900|00050", { comment: "right column, top" }),
+		hl("p1-early", "00000|000100|00600", { comment: "left column, bottom" }),
+	];
+	assert.deepEqual(ids(buildEntries({ annotations })), ["p1-early", "p1-late", "p2"]);
+});
+
+test("the colour filter keeps the chosen colours, any letter case, and the open annotation", () => {
+	const annotations = [
+		hl("yellow", "00000|000010|00100", { comment: "c", color: "#FFD400" }),
+		hl("red", "00000|000020|00200", { comment: "c", color: "#ff6666" }),
+		hl("green", "00000|000030|00300", { comment: "c", color: "#5fb236" }),
+	];
+	assert.deepEqual(ids(buildEntries({ annotations, colors: new Set(["#ffd400"]) })), ["yellow"]);
+	assert.deepEqual(ids(buildEntries({ annotations, colors: new Set(["#ffd400", "#5fb236"]) })), ["yellow", "green"]);
+	assert.deepEqual(ids(buildEntries({ annotations, colors: new Set(["#ffd400"]), activeId: "red" })), ["yellow", "red"]);
+	assert.deepEqual(ids(buildEntries({ annotations, colors: new Set() })), ["yellow", "red", "green"]);
+});
+
+test("a draft is listed in its place and stands in for the annotation it became", () => {
+	const annotations = [hl("a", "00000|000010|00100", { comment: "c" }), note("made", "00000|000000|00000")];
+	const draft = { id: "draft-1", type: "note", comment: "", sortIndex: "00000|000000|00000", createdId: "made" };
+	assert.deepEqual(ids(buildEntries({ annotations, draft })), ["draft-1", "a"]);
+	// Filters do not hide what is being written.
+	assert.deepEqual(ids(buildEntries({ annotations, draft, colors: new Set(["#000000"]) })), ["draft-1"]);
+});
+
+test("headings are placed by sort index, ahead of what starts at the same place", () => {
+	const annotations = [hl("a", "00001|000000|00000", { comment: "c" }), hl("b", "00002|000050|00100", { comment: "c" })];
+	const headings = [
+		{ id: "h2", sortIndex: "00002|000000|00000" },
+		{ id: "h1", sortIndex: "00001|000000|00000" },
+	];
+	assert.deepEqual(ids(buildEntries({ annotations, headings })), ["h1", "a", "h2", "b"]);
+	// A chapter starting at the top of a page (before any of its text) comes
+	// before the notes written for that page, whatever their heights say.
+	const pageNote = note("page-note", "00002|000000|00000");
+	const topHeading = [{ id: "top", sortIndex: "00002|000000|00032" }];
+	assert.deepEqual(ids(buildEntries({ annotations: [pageNote, annotations[1]], headings: topHeading })), ["top", "page-note", "b"]);
+	// A colour filter leaves the headings in.
+	assert.deepEqual(ids(buildEntries({ annotations, headings, colors: new Set(["#123456"]) })), ["h1", "h2"]);
+});
+
+test("the outline is flattened in document order; entries without a place or a title are left out", () => {
+	const at = (pageIndex, x, y) => ({ position: { pageIndex, rects: [[x, y, x, y]] } });
+	const outline = [
+		{ title: "1 Introduction", location: at(0, 72, 700), items: [
+			{ title: " 1.1 Aim ", location: at(1, 72, 500), items: [] },
+			{ title: "External", url: "https://example.org", items: [] },
+		] },
+		{ title: "", location: at(2, 0, 0), items: [{ title: "2.1 Nested under nothing", location: at(3, 10, 20) }] },
+	];
+	const flat = flattenOutline(outline);
+	assert.deepEqual(flat.map(h => [h.id, h.title, h.depth, h.pageIndex, h.x, h.y]), [
+		["outline-0", "1 Introduction", 0, 0, 72, 700],
+		["outline-0-0", "1.1 Aim", 1, 1, 72, 500],
+		["outline-1-0", "2.1 Nested under nothing", 1, 3, 10, 20],
+	]);
+	assert.equal(flat[0].location, outline[0].location, "the place to navigate to is kept");
+	assert.deepEqual(flattenOutline(null), []);
+});
+
+test("sort index parts are padded and cut as Zotero does", () => {
+	assert.equal(sortIndexOf(3, 42, 7.9), "00003|000042|00007");
+	assert.equal(sortIndexOf(0, 0, -5), "00000|000000|00000");
+	assert.equal(sortIndexOf(123456, 1234567, 123456), "12345|123456|12345");
+});
+
+test("a page's notes take the next free slot at the start of the page", () => {
+	assert.deepEqual(pageStartSlot(4, []), { slot: 0, sortIndex: "00004|000000|00000" });
+	const annotations = [
+		note("first", "00004|000000|00000"),
+		note("third", "00004|000000|00002"),
+		note("other-page", "00005|000000|00007"),
+		note("in-the-text", "00004|000120|00300"),
+		hl("highlight-at-start", "00004|000000|00009"),
+	];
+	assert.deepEqual(pageStartSlot(4, annotations), { slot: 3, sortIndex: "00004|000000|00003" });
+	// It sorts ahead of everything else on its page and after the page before.
+	const entries = buildEntries({ annotations: [...annotations, note("new", "00004|000000|00003"), note("prev", "00003|000999|00700")] });
+	assert.deepEqual(ids(entries), ["prev", "first", "third", "new", "in-the-text", "other-page"]);
+});
+
+test("used colours come in palette order, unknown ones after", () => {
+	const palette = ["#ffd400", "#ff6666", "#5fb236"];
+	const annotations = [
+		hl("a", "", { color: "#5FB236" }), hl("b", "", { color: "#123456" }), note("c", "", { color: "#ffd400" }),
+		hl("d", "", { color: "#ff6666", _hidden: true }), { id: "e", type: "text", color: "#ff6666" },
+	];
+	assert.deepEqual(usedColors(annotations, palette), ["#ffd400", "#5fb236", "#123456"]);
+});
