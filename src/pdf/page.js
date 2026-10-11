@@ -22,6 +22,7 @@ import {
 	SELECTION_COLOR
 } from '../common/defines';
 import { getRectRotationOnText } from './selection';
+import { isNoteShownInStrip } from '../obsidian-evo';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -230,6 +231,10 @@ export default class Page {
 	_pushNote(items, annotation) {
 		let position = this._p2v(annotation.position);
 		let viewRect = position.rects[0];
+		// ZotFlow Evo: a note written in the note strip is shown there
+		if (isNoteShownInStrip(viewRect, this._originalPage.viewport.width)) {
+			return;
+		}
 		items.push({
 			kind: 'noteIcon',
 			x: round(viewRect[0]),

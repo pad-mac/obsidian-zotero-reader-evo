@@ -75,6 +75,11 @@ import { initializeEditorMathJax } from "./obsidian-mathjax.js";
 				readerAdapter.setAnnotationPopupSuppressed(suppressed);
 				return true;
 			},
+			// ZotFlow Evo
+			async setNoteStrip(settings) {
+				readerAdapter.setNoteStrip(settings);
+				return true;
+			},
 			async destroy() {
 				if (destroyed) return true;
 				destroyed = true;

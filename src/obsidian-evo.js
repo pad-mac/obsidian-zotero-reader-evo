@@ -13,6 +13,9 @@ const TOOLBAR_HIDDEN_CLASS = "zf-evo-toolbar-hidden";
 /** Reader state key read by `common/components/reader-ui.js`. */
 export const SUPPRESS_ANNOTATION_POPUP_STATE = "zfEvoSuppressAnnotationPopup";
 
+/** Reader state key holding the note strip's settings (`evo/note-strip.js`). */
+export const NOTE_STRIP_STATE = "zfEvoStrip";
+
 /**
  * Variables the reader's Obsidian theme reads (`themes/_obsidian.scss`,
  * `components/_evo.scss`, the scrollbar rules). They are resolved even when
@@ -271,6 +274,54 @@ export function refreshResolvedObsidianVariables(docs) {
 	}
 }
 
+/**
+ * Documents the fork creates itself (the note strip) take their theme from
+ * the reader document: the classes and data attributes on its root, which
+ * the reader's stylesheet keys off, and the resolved variables.
+ */
+const themeFollowers = new Map();
+
+function syncThemeFollower(doc, { ownClass, after }) {
+	const from = document.documentElement;
+	const to = doc.documentElement;
+	if (!to) return;
+	to.className = `${from.className} ${ownClass}`.trim();
+	for (const name of Array.from(to.attributes, attr => attr.name)) {
+		if (name.startsWith("data-") && !from.hasAttribute(name)) to.removeAttribute(name);
+	}
+	for (const attr of Array.from(from.attributes)) {
+		if (attr.name.startsWith("data-")) to.setAttribute(attr.name, attr.value);
+	}
+	applyResolvedObsidianVariables(doc);
+	after?.();
+}
+
+/**
+ * Keep `doc` themed like the reader document. `ownClass` stays on its root;
+ * `after` runs each time the theme has been applied.
+ */
+export function followTheme(doc, ownClass = "", after = null) {
+	const follower = { ownClass, after };
+	themeFollowers.set(doc, follower);
+	syncThemeFollower(doc, follower);
+}
+
+export function unfollowTheme(doc) {
+	themeFollowers.delete(doc);
+}
+
+/** Call after the reader document's theme classes or variables changed. */
+export function syncThemeFollowers() {
+	for (const [doc, follower] of themeFollowers) {
+		try {
+			syncThemeFollower(doc, follower);
+		}
+		catch (e) {
+			console.warn("[ZotFlow Evo] Could not theme a document:", e);
+		}
+	}
+}
+
 /* ------------------------------------------------------------------ *
  * Reader chrome toggled from the Obsidian view header
  * ------------------------------------------------------------------ */
@@ -288,4 +339,82 @@ export function applyToolbarHidden(hidden) {
  */
 export function applyAnnotationPopupSuppressed(reader, suppressed) {
 	reader?._updateState?.({ [SUPPRESS_ANNOTATION_POPUP_STATE]: !!suppressed });
+}
+
+/**
+ * Settings of the note strip beside the PDF: `{ visible, collapsed, width,
+ * banner }`. Merged into what is already set, so one field can change alone.
+ */
+export function applyNoteStrip(reader, settings) {
+	if (!reader?._updateState) return;
+	const current = reader._state?.[NOTE_STRIP_STATE] || {};
+	const next = { ...current, ...settings };
+	reader._updateState({ [NOTE_STRIP_STATE]: next });
+	const visible = !!next.visible && reader._type === "pdf";
+	if (visible !== stripShowsNotes) {
+		stripShowsNotes = visible;
+		// Notes on the page edge appear or disappear (see below).
+		try {
+			reader._primaryView?._render?.();
+			reader._secondaryView?._render?.();
+		}
+		catch (e) {
+			console.warn("[ZotFlow Evo] Could not redraw the pages:", e);
+		}
+	}
+}
+
+let stripShowsNotes = false;
+
+/**
+ * A note written in the strip is stored against the right-hand edge of its
+ * page (Zotero needs every note to have a spot on a page). While the strip
+ * is open that note is shown in the strip and its icon is left off the
+ * page. Called from `_pushNote()` in `pdf/page.js` with the note's rectangle
+ * and the page's width, both in page view pixels.
+ */
+export function isNoteShownInStrip(viewRect, pageViewWidth) {
+	return stripShowsNotes && !!viewRect && viewRect[2] >= pageViewWidth - 1;
+}
+
+/* ------------------------------------------------------------------ *
+ * Annotations written here are not rolled back by a refresh
+ * ------------------------------------------------------------------ */
+
+/**
+ * After a sync the plugin replaces the reader's annotations with the copies
+ * in its database. With automatic sync that can happen while a comment is
+ * being written: the copy read from the database a moment earlier is then
+ * older than what is on screen, and applying it would take back the last
+ * words typed (or bring back an annotation just deleted, or drop one just
+ * created).
+ *
+ * So an annotation written here stays as it is here until its save has
+ * safely landed: while it still waits to be saved, and for a few seconds
+ * after it was handed to the plugin.
+ */
+const LOCAL_WRITE_GRACE_MS = 4000;
+const localWrites = new Map();
+
+/** Annotations (by id) the reader has just handed to the plugin to save or delete. */
+export function noteLocalAnnotationWrites(ids) {
+	const now = Date.now();
+	for (const [id, time] of localWrites) {
+		if (now - time > LOCAL_WRITE_GRACE_MS) localWrites.delete(id);
+	}
+	for (const id of ids || []) localWrites.set(id, now);
+}
+
+/** Ids a refresh from the database must leave alone right now. */
+export function annotationsNewerHere(reader) {
+	const ids = new Set();
+	const waiting = reader?._annotationManager?._unsavedAnnotations;
+	if (waiting) {
+		for (const id of waiting.keys()) ids.add(id);
+	}
+	const now = Date.now();
+	for (const [id, time] of localWrites) {
+		if (now - time <= LOCAL_WRITE_GRACE_MS) ids.add(id);
+	}
+	return ids;
 }

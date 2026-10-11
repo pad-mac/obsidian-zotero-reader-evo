@@ -29,3 +29,282 @@ body.zf-evo-toolbar-hidden {
 		top: 0;
 	}
 }
+
+// ---------------------------------------------------------------------
+// Note strip (src/evo/).
+//
+// The strip is a document of its own inside the PDF view; strip-host.js
+// gives it a copy of this stylesheet, and only there does the root carry
+// `zf-evo-strip-doc`. Where the strip sits in the PDF view is styled in
+// strip-host.js, because that document does not load this stylesheet.
+//
+// One strip line is `--zf-evo-line` high. strip-layout.mjs works with the
+// same number (LINE_HEIGHT); change both together.
+// ---------------------------------------------------------------------
+
+html.zf-evo-strip-doc {
+	--zf-evo-line: 20px;
+	--zf-evo-font-size: 13px;
+	// Left of the text: the colour bars, then the page number.
+	--zf-evo-gutter: 46px;
+	--zf-evo-surface: var(--color-toolbar, var(--background-primary, #fff));
+
+	height: 100%;
+	overflow: hidden;
+	// The colour around the page (see the top of this file).
+	background-color: var(--zf-evo-surface);
+
+	body {
+		height: 100%;
+		overflow: hidden;
+		background: transparent;
+		color: var(--text-normal, #222);
+		font-family: var(--font-interface, system-ui, sans-serif);
+		font-size: var(--zf-evo-font-size);
+		line-height: var(--zf-evo-line);
+	}
+
+	// List mode: the strip is a list that scrolls by itself.
+	body.zf-evo-strip-list {
+		overflow-y: auto;
+	}
+
+	.zf-evo-strip {
+		position: relative;
+		// An empty line takes a note.
+		cursor: text;
+
+		&.is-read-only,
+		&.is-list {
+			cursor: default;
+		}
+
+		&.is-list {
+			min-height: 100%;
+			padding: 6px 0 24px;
+		}
+	}
+
+	.zf-evo-empty {
+		padding: 0 12px;
+		color: var(--text-faint, #999);
+		user-select: none;
+	}
+
+	.zf-evo-card {
+		position: absolute;
+		left: 0;
+		right: 0;
+		padding-inline: var(--zf-evo-gutter) 8px;
+		cursor: default;
+
+		&.is-active {
+			z-index: 2;
+			// Opened over whatever follows it.
+			background-color: var(--zf-evo-surface);
+			box-shadow:
+				0 0 0 1px var(--background-modifier-border, rgba(128, 128, 128, 0.3)),
+				0 4px 14px rgba(0, 0, 0, 0.14);
+			border-radius: 4px;
+			cursor: text;
+		}
+	}
+
+	.zf-evo-strip.is-list .zf-evo-card {
+		position: relative;
+
+		&.is-active {
+			box-shadow: 0 0 0 1px var(--background-modifier-border, rgba(128, 128, 128, 0.3));
+		}
+	}
+
+	// One bar: the comment of a highlight. Two: a note placed on the page.
+	.zf-evo-bars {
+		position: absolute;
+		top: 2px;
+		bottom: 2px;
+		inset-inline-start: 6px;
+		display: flex;
+		gap: 2px;
+		pointer-events: none;
+	}
+
+	.zf-evo-bar {
+		width: 3px;
+		border-radius: 2px;
+		background-color: var(--zf-evo-color);
+	}
+
+	// Outside the text: not selected by select-all, not reachable with the
+	// cursor.
+	.zf-evo-page {
+		position: absolute;
+		top: 0;
+		inset-inline-start: 16px;
+		width: 24px;
+		overflow: hidden;
+		text-align: end;
+		white-space: nowrap;
+		color: var(--text-faint, #999);
+		font-size: 11px;
+		line-height: var(--zf-evo-line);
+		font-variant-numeric: tabular-nums;
+		font-feature-settings: "tnum";
+		user-select: none;
+		pointer-events: none;
+	}
+
+	.zf-evo-card-clip {
+		height: 100%;
+		overflow: hidden;
+	}
+
+	.zf-evo-card.is-active .zf-evo-card-clip,
+	.zf-evo-strip.is-list .zf-evo-card-clip {
+		height: auto;
+		overflow: visible;
+	}
+
+	// Cut short because the next comment starts inside it: fade out.
+	.zf-evo-card.is-clamped .zf-evo-card-clip {
+		-webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--zf-evo-line)), transparent);
+		mask-image: linear-gradient(to bottom, #000 calc(100% - var(--zf-evo-line)), transparent);
+	}
+
+	.zf-evo-card-inner {
+		min-height: var(--zf-evo-line);
+		overflow-wrap: anywhere;
+	}
+
+	.zf-evo-plain {
+		white-space: pre-wrap;
+	}
+
+	// ----- Obsidian's editor and renderer, brought down to strip lines -----
+
+	.zf-evo-editor,
+	.zf-evo-preview {
+		font-size: var(--zf-evo-font-size);
+		line-height: var(--zf-evo-line);
+	}
+
+	.zf-evo-card .obsidian-app {
+		--font-text-size: var(--zf-evo-font-size);
+		--line-height-normal: calc(20 / 13);
+		--file-margins: 0px;
+		--file-line-width: 100%;
+		--p-spacing: 0px;
+		--heading-spacing: 0px;
+		background: transparent;
+		color: inherit;
+		font-size: var(--zf-evo-font-size);
+		line-height: var(--zf-evo-line);
+		// markdown-editor.ts sets `contain: content` on the editor's
+		// container; the open comment has to be free to grow.
+		contain: none !important;
+	}
+
+	.zf-evo-card .content {
+		padding: 0;
+		min-height: var(--zf-evo-line);
+		max-height: none;
+		background: transparent;
+		font-size: var(--zf-evo-font-size);
+		line-height: var(--zf-evo-line);
+
+		&:focus {
+			background: transparent;
+		}
+	}
+
+	.zf-evo-card .markdown-source-view,
+	.zf-evo-card .cm-editor,
+	.zf-evo-card .cm-scroller,
+	.zf-evo-card .cm-sizer,
+	.zf-evo-card .cm-contentContainer,
+	.zf-evo-card .cm-content {
+		min-height: var(--zf-evo-line) !important;
+		height: auto !important;
+		max-width: none !important;
+		margin: 0 !important;
+		padding: 0 !important;
+		background: transparent !important;
+	}
+
+	.zf-evo-card .cm-scroller {
+		overflow: visible !important;
+		font-size: var(--zf-evo-font-size);
+		line-height: var(--zf-evo-line);
+	}
+
+	.zf-evo-card .cm-editor,
+	.zf-evo-card .cm-editor.cm-focused {
+		outline: 0 !important;
+	}
+
+	.zf-evo-card .cm-line {
+		padding: 0 !important;
+	}
+
+	.zf-evo-card .zf-evo-md {
+		> :first-child {
+			margin-block-start: 0 !important;
+		}
+
+		> :last-child {
+			margin-block-end: 0 !important;
+		}
+
+		p,
+		ul,
+		ol,
+		blockquote,
+		pre {
+			margin-block: 0;
+		}
+
+		ul,
+		ol {
+			padding-inline-start: 1.4em;
+		}
+
+		img {
+			max-width: 100%;
+		}
+	}
+
+	// Stand-in when Obsidian's editor cannot be created in this document.
+	.zf-evo-plain-editor {
+		display: block;
+		width: 100%;
+		min-height: var(--zf-evo-line);
+		border: 0;
+		outline: 0;
+		resize: none;
+		overflow: hidden;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+	}
+
+	// Colour of a note. Only on the open note.
+	.zf-evo-palette {
+		display: flex;
+		gap: 5px;
+		padding: 3px 0 5px;
+	}
+
+	.zf-evo-swatch {
+		width: 12px;
+		height: 12px;
+		border-radius: 50%;
+		background-color: var(--zf-evo-color);
+		cursor: pointer;
+
+		&.is-current {
+			box-shadow:
+				0 0 0 2px var(--zf-evo-surface),
+				0 0 0 3px var(--zf-evo-color);
+		}
+	}
+}

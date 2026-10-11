@@ -4,10 +4,14 @@ import readerFTL from '../locales/en-US/reader.ftl';
 import brandFTL from '../locales/en-US/brand.ftl';
 import { ObsidianBridge } from "./obsidian-adapter";
 import {
+	annotationsNewerHere,
 	applyAnnotationPopupSuppressed,
+	applyNoteStrip,
+	noteLocalAnnotationWrites,
 	applyResolvedObsidianVariables,
 	applyToolbarHidden,
 	refreshResolvedObsidianVariables,
+	syncThemeFollowers,
 } from "./obsidian-evo";
 
 /**
@@ -61,12 +65,16 @@ export default class ZoteroReaderAdapter {
 			},
 			onSaveAnnotations: (annotations) => {
 				console.log("Save annotations", annotations);
+				// ZotFlow Evo: see refreshAnnotations()
+				noteLocalAnnotationWrites(annotations.map(x => x.id));
 				this.emit({ type: "annotationsSaved", annotations });
 			},
 			onUpdateAnnotation: (annotation) => {
 				this.emit({ type: "annotationUpdated", annotation });
 			},
 			onDeleteAnnotations: (ids) => {
+				// ZotFlow Evo: see refreshAnnotations()
+				noteLocalAnnotationWrites(ids);
 				this.emit({ type: "annotationsDeleted", ids });
 			},
 			onChangeViewState: (state, primary) => {
@@ -161,6 +169,8 @@ export default class ZoteroReaderAdapter {
 		refreshResolvedObsidianVariables([document]);
 		this.setToolbarHidden(opts.toolbarHidden);
 		this.annotationPopupSuppressed = !!opts.annotationPopupSuppressed;
+		// A setting changed while the reader was still loading is the newer one.
+		this.noteStrip = { ...opts.noteStrip, ...this.noteStrip };
 		
 		// Check if obsidian theme is already in customThemes, if not add it
 		if (config.customThemes.some((t) => t.id === "obsidian")) {
@@ -241,6 +251,9 @@ export default class ZoteroReaderAdapter {
 			this.secondaryViewInitialized = true;
 		}
 
+		// ZotFlow Evo: needs the PDF view's document, styled as above.
+		this.setNoteStrip(this.noteStrip);
+
 		this.emit({ type: "ready" });
 	}
 
@@ -269,6 +282,8 @@ export default class ZoteroReaderAdapter {
 		this.reader.setCustomThemes(newCustomThemes);
 		this.applyPageBackgroundColor(this.reader?._primaryView?._iframeWindow.document);
 		this.applyPageBackgroundColor(this.reader?._secondaryView?._iframeWindow.document);
+		// ZotFlow Evo: documents the fork created follow the reader document.
+		syncThemeFollowers();
 	}
 
 	applyColorScheme(colorScheme, document) {
@@ -433,6 +448,13 @@ export default class ZoteroReaderAdapter {
 		applyAnnotationPopupSuppressed(this.reader, this.annotationPopupSuppressed);
 	}
 
+	// ZotFlow Evo: `{ visible, collapsed, width, banner }`, any subset.
+	setNoteStrip(settings) {
+		if (!settings) return;
+		this.noteStrip = { ...this.noteStrip, ...settings };
+		applyNoteStrip(this.reader, this.noteStrip);
+	}
+
 	addAnnotation(annotation) {
 		if (this.reader) {
 			this.reader._annotationManager.addAnnotation(annotation);
@@ -441,9 +463,13 @@ export default class ZoteroReaderAdapter {
 
 	async refreshAnnotations(annotations) {
 		if (this.reader) {
+			// ZotFlow Evo: what was written here a moment ago is newer than
+			// the copy this refresh carries; leave it as it is here.
+			const newerHere = annotationsNewerHere(this.reader);
+			annotations = annotations.filter((a) => !newerHere.has(a.id));
 			// Unset all annotations not in the new list, and set the new ones
 			const newIDs = new Set(annotations.map((a) => a.id));
-			const annotationsToRemove = this.reader._annotationManager._annotations.filter(x => !newIDs.has(x.id)).map(x => x.id);
+			const annotationsToRemove = this.reader._annotationManager._annotations.filter(x => !newIDs.has(x.id) && !newerHere.has(x.id)).map(x => x.id);
 			this.reader._annotationManager.unsetAnnotations(annotationsToRemove);
 			this.reader.setAnnotations(annotations);
 		}
