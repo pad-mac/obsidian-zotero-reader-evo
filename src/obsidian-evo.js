@@ -19,6 +19,11 @@ const TOOLBAR_HIDDEN_CLASS = "zf-evo-toolbar-hidden";
  */
 export const NOTE_STRIP_STATE = "zfEvoStrip";
 
+/** Whether a document of this kind (`reader._type`) can have the note strip. */
+export function hasNoteStrip(type) {
+	return type === "pdf" || type === "snapshot";
+}
+
 /**
  * Variables the reader's Obsidian theme reads (`themes/_obsidian.scss`,
  * `components/_evo.scss`, the scrollbar rules). They are resolved even when
@@ -338,9 +343,9 @@ export function applyToolbarHidden(hidden) {
 }
 
 /**
- * Settings of the note strip beside the PDF: `{ visible, collapsed, width,
- * banner, highlights }`. Merged into what is already set, so one field can
- * change alone.
+ * Settings of the note strip beside a PDF or a snapshot: `{ visible,
+ * collapsed, width, banner, highlights }`. Merged into what is already set,
+ * so one field can change alone.
  */
 export function applyNoteStrip(reader, settings) {
 	if (!reader?._updateState) return;

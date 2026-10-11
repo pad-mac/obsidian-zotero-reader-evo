@@ -290,6 +290,15 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 		}
 
 		let sortIndex = this._getSortIndex(range);
+		// ZotFlow Evo: a note stands for a whole block, and `range` then
+		// starts in the block's parent; counted from there the note sorts at
+		// the top of that parent. Count to the block's own text instead.
+		if (type === 'note') {
+			let own = this.toDisplayedRange(selector);
+			if (own) {
+				sortIndex = this._getSortIndex(own);
+			}
+		}
 		return {
 			type,
 			color,

@@ -21,8 +21,8 @@ import ReadAloudPopup from "./utility-popup/read-aloud-popup";
 import ReadAloudAnnotationPopup from "./utility-popup/read-aloud-annotation-popup";
 import ReadAloudFirstRunPopup from './modal-popup/read-aloud-first-run-popup';
 import { bundle } from '../../fluent';
-// ZotFlow Evo: the note strip beside the PDF (src/evo/)
-import EvoNoteStrip from '../../evo/note-strip';
+// ZotFlow Evo: the note strip beside a PDF or a snapshot (src/evo/)
+import EvoNoteStrip, { hasNoteStrip } from '../../evo/note-strip';
 
 function View(props) {
 	let { primary, state } = props;
@@ -67,7 +67,7 @@ function View(props) {
 				&& (
 					(!state.sidebarOpen || state.sidebarView !== 'annotations')
 					// ZotFlow Evo: with the note strip open, comments are written there
-					&& !(state.zfEvoStrip?.visible && props.type === 'pdf')
+					&& !(state.zfEvoStrip?.visible && hasNoteStrip(props.type))
 					&& state.annotations.find(x => x.id === state[name + 'ViewAnnotationPopup'].annotation.id)
 				)
 				&& <AnnotationPopup
@@ -230,7 +230,7 @@ const ReaderUI = React.forwardRef((props, ref) => {
 					<SplitViewResizer onResize={props.onResizeSplitView}/>
 					{state.splitType && <View {...props} primary={false} state={state} />}
 				</div>
-				{/* ZotFlow Evo: draws into its own document inside the PDF view */}
+				{/* ZotFlow Evo: draws into documents of its own beside the document */}
 				<EvoNoteStrip {...props} state={state}/>
 				{state.contextMenu && <ContextMenu params={state.contextMenu} onClose={props.onCloseContextMenu}/>}
 				{state.labelPopup && <LabelPopup params={state.labelPopup} onUpdateAnnotations={props.onUpdateAnnotations} onClose={props.onCloseLabelPopup}/>}

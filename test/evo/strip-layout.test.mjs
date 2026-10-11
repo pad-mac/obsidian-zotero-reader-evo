@@ -75,7 +75,8 @@ test("estimateHeight grows with the text", () => {
 /* ---------------------------- entries ---------------------------- */
 
 import {
-	annotationParts, buildEntries, flattenOutline, pageStartSlot, sortIndexOf, usedColors,
+	annotationParts, buildEntries, flattenOutline, lastListed, lastOnPage, pageStartSlot, sortIndexAfter, sortIndexOf,
+	usedColors,
 } from "../../src/evo/strip-layout.mjs";
 
 const hl = (id, sortIndex, extra = {}) => ({ id, type: "highlight", color: "#ffd400", comment: "", text: "t " + id, sortIndex, ...extra });
@@ -198,4 +199,101 @@ test("used colours come in palette order, unknown ones after", () => {
 		hl("d", "", { color: "#ff6666", _hidden: true }), { id: "e", type: "text", color: "#ff6666" },
 	];
 	assert.deepEqual(usedColors(annotations, palette), ["#ffd400", "#5fb236", "#123456"]);
+});
+
+test("on one spot: what was marked, then its notes in the order they were written, the one being written last", () => {
+	const at = "00002|000140|00310";
+	const annotations = [
+		note("second", at, { dateAdded: "2026-10-02T10:00:00Z" }),
+		note("first", at, { dateAdded: "2026-10-01T10:00:00Z" }),
+		hl("marked", at, { comment: "c", dateAdded: "2026-10-03T10:00:00Z" }),
+	];
+	assert.deepEqual(ids(buildEntries({ annotations })), ["marked", "first", "second"]);
+	const draft = { id: "draft-1", _draft: true, type: "note", comment: "", sortIndex: at, createdId: null };
+	assert.deepEqual(ids(buildEntries({ annotations, draft })), ["marked", "first", "second", "draft-1"]);
+	// The same in a snapshot, whose sort index is one number.
+	const web = [note("n", "0001234", { dateAdded: "2026-10-01T10:00:00Z" }), hl("h", "0001234", { comment: "c", dateAdded: "2026-10-05T10:00:00Z" })];
+	assert.deepEqual(ids(buildEntries({ annotations: web })), ["h", "n"]);
+});
+
+test("a note written after an entry sorts right behind it, before whatever comes next", () => {
+	const annotations = [
+		hl("a", "00003|000120|00200", { comment: "c" }),
+		hl("b", "00003|000180|00214", { comment: "c" }),
+		note("page-note", "00003|000000|00000"),
+	];
+	const first = sortIndexAfter("00003|000120|00200", annotations);
+	assert.equal(first, "00003|000120|00264", "the same place in the text, further on in the last part");
+	annotations.push(note("n1", first));
+	assert.deepEqual(ids(buildEntries({ annotations })), ["page-note", "a", "n1", "b"]);
+	// The next one after that note: behind it.
+	const second = sortIndexAfter(first, annotations);
+	annotations.push(note("n2", second));
+	assert.deepEqual(ids(buildEntries({ annotations })), ["page-note", "a", "n1", "n2", "b"]);
+	// One put between the highlight and its first note lands between them.
+	const between = sortIndexAfter("00003|000120|00200", annotations);
+	assert.equal(between, "00003|000120|00232");
+	annotations.push(note("n0", between));
+	assert.deepEqual(ids(buildEntries({ annotations })), ["page-note", "a", "n0", "n1", "n2", "b"]);
+});
+
+test("without room behind an entry the note takes the entry's own index and the order of writing decides", () => {
+	const annotations = [
+		hl("a", "00000|000050|00100", { comment: "c", dateAdded: "2026-10-01T10:00:00Z" }),
+		note("n1", "00000|000050|00101", { dateAdded: "2026-10-02T10:00:00Z" }),
+	];
+	const tight = sortIndexAfter("00000|000050|00100", annotations);
+	assert.equal(tight, "00000|000050|00100");
+	annotations.push(note("n2", tight, { dateAdded: "2026-10-03T10:00:00Z" }));
+	assert.deepEqual(ids(buildEntries({ annotations })), ["a", "n2", "n1"]);
+	// The last part never grows past its width.
+	assert.equal(sortIndexAfter("00000|000050|99990", []), "00000|000050|99999");
+	assert.equal(sortIndexAfter("", []), "");
+});
+
+test("in a snapshot a note follows by a few characters, halfway to the next annotation at most", () => {
+	const annotations = [hl("a", "0001200", { comment: "c" }), hl("b", "0001206", { comment: "c" }), hl("far", "0009000")];
+	assert.equal(sortIndexAfter("0001200", annotations), "0001203");
+	assert.equal(sortIndexAfter("0001206", annotations), "0001214");
+	assert.equal(sortIndexAfter("0009000", annotations), "0009008");
+	assert.equal(sortIndexAfter("9999995", []), "9999999");
+	// Other documents' formats are left alone: only the same shape counts.
+	assert.equal(sortIndexAfter("0001200", [hl("pdf", "00000|000050|01201")]), "0001208");
+});
+
+test("the last thing listed on a page, in the strip's order", () => {
+	const annotations = [
+		hl("early", "00004|000010|00100"),
+		hl("late", "00004|000700|00050"),
+		note("after-late", "00004|000700|00114"),
+		{ id: "typed", type: "text", sortIndex: "00004|000900|00700" },
+		hl("gone", "00004|000950|00720", { _hidden: true }),
+		hl("next-page", "00005|000001|00001"),
+	];
+	assert.equal(lastOnPage(4, annotations).id, "after-late");
+	assert.equal(lastOnPage(5, annotations).id, "next-page");
+	assert.equal(lastOnPage(6, annotations), null);
+	assert.equal(lastListed(annotations).id, "next-page");
+	assert.equal(lastListed(annotations, annotation => annotation.type === "highlight" && annotation.id !== "next-page").id, "late");
+	assert.equal(lastListed([]), null);
+});
+
+test("a snapshot's outline: headings placed by a selector are kept", () => {
+	const selector = value => ({ position: { type: "CssSelector", value } });
+	const outline = [
+		{ title: "Title", location: selector("h1"), items: [{ title: "Part one", location: selector("#one"), items: [] }] },
+		{ title: "No place", location: {}, items: [] },
+	];
+	const flat = flattenOutline(outline);
+	assert.deepEqual(flat.map(h => [h.id, h.title, h.depth, h.pageIndex]), [
+		["outline-0", "Title", 0, undefined],
+		["outline-0-0", "Part one", 1, undefined],
+	]);
+	assert.equal(flat[1].location, outline[0].items[0].location);
+	// In a snapshot headings and annotations are ordered by one number.
+	const entries = buildEntries({
+		annotations: [hl("a", "0000300", { comment: "c" }), hl("b", "0000100", { comment: "c" })],
+		headings: [{ id: "h2", sortIndex: "0000200" }, { id: "h1", sortIndex: "0000100" }],
+	});
+	assert.deepEqual(ids(entries), ["h1", "b", "h2", "a"]);
 });

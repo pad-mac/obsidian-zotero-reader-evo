@@ -93,21 +93,43 @@ export function annotationParts(annotation, { activeId = null, showHighlights = 
 	};
 }
 
+/** Zotero's sort index for a PDF: page, offset in the page's text, distance from the page's top. */
+const PDF_SORT_INDEX = /^\d{5}\|\d{6}\|\d{5}$/;
+
+/**
+ * The part of a sort index that says where in the text something is. For a
+ * PDF that is the page and the offset in its text; the height on the page
+ * that follows only tells things at one place apart. Elsewhere (a snapshot:
+ * characters from the start of the document) it is the whole index.
+ */
+function placeOf(sortIndex) {
+	return PDF_SORT_INDEX.test(sortIndex) ? sortIndex.slice(0, 12) : sortIndex;
+}
+
 function compareEntries(a, b) {
-	// Page and place in the page's text first. A heading stands before
-	// whatever begins at the same place: a chapter that starts at the top of
-	// a page comes before the notes written for that page.
-	const placeA = a.sortIndex.slice(0, 12);
-	const placeB = b.sortIndex.slice(0, 12);
+	// Place in the text first. A heading stands before whatever begins at the
+	// same place: a chapter that starts at the top of a page comes before the
+	// notes written for that page.
+	const placeA = placeOf(a.sortIndex);
+	const placeB = placeOf(b.sortIndex);
 	if (placeA !== placeB) return placeA < placeB ? -1 : 1;
 	if (a.kind !== b.kind) return a.kind === "heading" ? -1 : 1;
 	if (a.sortIndex !== b.sortIndex) return a.sortIndex < b.sortIndex ? -1 : 1;
+	// On one spot: what was marked there, then the notes written about it, in
+	// the order they were written. One still being written is the newest.
+	const noteA = a.annotation?.type === "note";
+	const noteB = b.annotation?.type === "note";
+	if (noteA !== noteB) return noteA ? 1 : -1;
+	const madeA = a.annotation?._draft ? "\uffff" : a.annotation?.dateAdded || "";
+	const madeB = b.annotation?._draft ? "\uffff" : b.annotation?.dateAdded || "";
+	if (madeA !== madeB) return madeA < madeB ? -1 : 1;
 	return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
 /**
  * The strip's entries in reading order: annotations and outline headings,
- * ordered by Zotero's sort index (page, position in the page's text, height).
+ * ordered by Zotero's sort index (in a PDF: page, position in the page's
+ * text, height; in a snapshot: position in the text).
  *
  * @param {object} options
  * @param {object[]} options.annotations The reader's annotations.
@@ -150,11 +172,14 @@ export function buildEntries({
 }
 
 /**
- * The PDF's outline as a flat list, in document order.
+ * The document's outline as a flat list, in document order.
  *
  * @param {object[] | null} outline The reader's outline: `{ title, items,
- *   location: { position: { pageIndex, rects: [[x, y, x, y]] } } }`.
- * @returns {{ id: string, title: string, depth: number, pageIndex: number, x: number, y: number, location: object }[]}
+ *   location: { position } }`. In a PDF a position is `{ pageIndex, rects:
+ *   [[x, y, x, y]] }`, in a snapshot a selector.
+ * @returns {{ id: string, title: string, depth: number, location: object,
+ *   pageIndex?: number, x?: number, y?: number }[]} `pageIndex`, `x` and `y`
+ *   for a place in a PDF.
  */
 export function flattenOutline(outline) {
 	const out = [];
@@ -162,19 +187,20 @@ export function flattenOutline(outline) {
 		(items || []).forEach((item, index) => {
 			const here = path.concat(index);
 			const position = item.location?.position;
-			const rect = position?.rects?.[0];
 			const title = String(item.title || "").trim();
-			if (title && rect && Number.isInteger(position.pageIndex)) {
-				out.push({
-					id: "outline-" + here.join("-"),
-					title,
-					depth,
-					pageIndex: position.pageIndex,
-					x: rect[0],
-					y: rect[1],
-					location: item.location,
-				});
+			const heading = { id: "outline-" + here.join("-"), title, depth };
+			let placed = false;
+			if (position && Number.isInteger(position.pageIndex)) {
+				const rect = position.rects?.[0];
+				if (rect) {
+					Object.assign(heading, { pageIndex: position.pageIndex, x: rect[0], y: rect[1] });
+					placed = true;
+				}
 			}
+			else if (position && typeof position.type === "string") {
+				placed = true;
+			}
+			if (title && placed) out.push({ ...heading, location: item.location });
 			walk(item.items, depth + 1, here);
 		});
 	};
@@ -205,6 +231,67 @@ export function pageStartSlot(pageIndex, annotations) {
 		if (Number.isFinite(taken)) slot = Math.max(slot, taken + 1);
 	}
 	return { slot, sortIndex: sortIndexOf(pageIndex, 0, slot) };
+}
+
+/** How far behind what it follows a note is put, where nothing else limits it. */
+const FOLLOW_STEP_PDF = 64;
+const FOLLOW_STEP_TEXT = 8;
+
+/**
+ * The sort index for a note written after `after` (the sort index of the
+ * entry it follows): the same place in the text, a little further on in the
+ * last part of the index — for a PDF the height on the page, which nothing
+ * else at that place uses; elsewhere the offset in the text.
+ *
+ * "A little" is half of the way to the next thing there, so that a note can
+ * still be put between two; without room the index is the same as `after`,
+ * and the order of writing decides (see compareEntries()).
+ *
+ * @param {string} after
+ * @param {{ sortIndex?: string }[]} annotations Everything in the document.
+ */
+export function sortIndexAfter(after, annotations) {
+	after = String(after || "");
+	const cut = after.lastIndexOf("|") + 1;
+	const prefix = after.slice(0, cut);
+	const width = after.length - cut;
+	const value = Number.parseInt(after.slice(cut), 10);
+	if (!width || !Number.isFinite(value)) return after;
+	let next = Infinity;
+	for (const annotation of annotations) {
+		const other = String(annotation.sortIndex || "");
+		if (other.length !== after.length || !other.startsWith(prefix)) continue;
+		const taken = Number.parseInt(other.slice(cut), 10);
+		if (taken > value && taken < next) next = taken;
+	}
+	const step = PDF_SORT_INDEX.test(after) ? FOLLOW_STEP_PDF : FOLLOW_STEP_TEXT;
+	const ahead = next === Infinity ? step : Math.min(step, Math.floor((next - value) / 2));
+	const limit = 10 ** width - 1;
+	return prefix + String(Math.min(value + ahead, limit)).padStart(width, "0");
+}
+
+/**
+ * The last of the annotations the strip can list, in the strip's order, or
+ * null. `keep` narrows them down (to a page, to what is on screen).
+ *
+ * @param {object[]} annotations
+ * @param {(annotation: object) => boolean} [keep]
+ */
+export function lastListed(annotations, keep = null) {
+	let last = null;
+	for (const annotation of annotations) {
+		if (annotation._hidden || !LISTED_TYPES.has(annotation.type)) continue;
+		if (keep && !keep(annotation)) continue;
+		const entry = { kind: "annotation", id: annotation.id, annotation, sortIndex: String(annotation.sortIndex || "") };
+		if (!last || compareEntries(last, entry) < 0) last = entry;
+	}
+	return last ? last.annotation : null;
+}
+
+/** The last thing the strip can list on a page of a PDF, or null if the page has nothing. */
+export function lastOnPage(pageIndex, annotations) {
+	const prefix = sortIndexOf(pageIndex, 0, 0).slice(0, 6); // "PPPPP|"
+	return lastListed(annotations, annotation => String(annotation.sortIndex || "").startsWith(prefix));
 }
 
 /** The colours in use, in the order of `palette` (others after it, as found). */

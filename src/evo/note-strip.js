@@ -1,21 +1,25 @@
 /**
- * ZotFlow Evo — the note strip: the comments of a PDF, beside the pages.
+ * ZotFlow Evo — the note strip: the comments of a PDF or a snapshot, beside
+ * the document.
  *
  * Rendered by the reader's React tree (one line in reader-ui.js) into the
- * strip's own documents, which `strip-host.js` creates inside the PDF view:
- * a pinned head (title line, buttons, colour filters) and the strip itself.
- * What is listed, and in what order, is decided in `strip-layout.mjs`.
+ * strip's own documents (`strip-host.js`): a pinned head (title line,
+ * buttons, colour filters) and the strip itself. Beside a PDF they stand
+ * inside the PDF view (`strip-host-pdf.js`), beside a snapshot in the
+ * reader's document (`strip-host-dom.js`). What is listed, and in what
+ * order, is decided in `strip-layout.mjs`.
  *
  * The strip shows what Zotero stores:
  *  - comments — of a highlight, underline, image or ink annotation, and note
  *    annotations — each with two bars in the annotation's colour;
- *  - with "highlights" switched on, what was marked on the page as well: the
+ *  - with "highlights" switched on, what was marked in the text as well: the
  *    full text of each highlight, with one bar;
- *  - the PDF's outline, as plain headings between them.
+ *  - the document's outline, as plain headings between them.
  *
  * It has two modes. As a list (the default) it is a column of its own, like
- * the reader's annotations sidebar. Anchored, every entry sits beside its
- * place on the page and the strip scrolls with the pages.
+ * the reader's annotations sidebar. Anchored — beside a PDF only — every
+ * entry sits beside its place on the page and the strip scrolls with the
+ * pages.
  */
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
@@ -23,11 +27,14 @@ import { createPortal } from "react-dom";
 import cx from "classnames";
 import { ObsidianBridge } from "../obsidian-adapter";
 import { ANNOTATION_COLORS } from "../common/defines";
-import { NOTE_STRIP_STATE, applyNoteStrip, reportNoteStrip } from "../obsidian-evo";
-import { EvoStripHost } from "./strip-host";
+import { NOTE_STRIP_STATE, applyNoteStrip, hasNoteStrip, reportNoteStrip } from "../obsidian-evo";
+import { PdfStripHost } from "./strip-host-pdf";
+import { DomStripHost } from "./strip-host-dom";
 import {
-	buildEntries, estimateHeight, flattenOutline, layoutCards, pageStartSlot, usedColors, LINE_HEIGHT,
+	buildEntries, estimateHeight, flattenOutline, layoutCards, sortIndexAfter, usedColors, LINE_HEIGHT,
 } from "./strip-layout.mjs";
+
+export { hasNoteStrip };
 
 /** Entries this far above and below the visible part are rendered too (anchored mode). */
 const OVERSCAN = 1500;
@@ -459,7 +466,7 @@ function IconPlus() {
 	);
 }
 
-function StripHead({ annotations, settings, colors, readOnly, onToggleColor, onToggleHighlights, onNewNote }) {
+function StripHead({ annotations, settings, colors, readOnly, paged, onToggleColor, onToggleHighlights, onNewNote }) {
 	const swatches = useMemo(() => {
 		const used = usedColors(annotations, PALETTE);
 		// A chosen colour stays on offer after its last annotation is gone,
@@ -488,7 +495,7 @@ function StripHead({ annotations, settings, colors, readOnly, onToggleColor, onT
 					<button
 						type="button"
 						className="zf-evo-tool"
-						title="New note on this page"
+						title={paged ? "New note on this page" : "New note here"}
 						data-tool="new-note"
 						onClick={onNewNote}
 					>
@@ -522,11 +529,12 @@ function StripHead({ annotations, settings, colors, readOnly, onToggleColor, onT
  * ------------------------------------------------------------------ */
 
 function Strip({
-	host, state, settings, colors, actions,
+	host, state, settings, colors, actions, paged,
 	onUpdateAnnotations, onSelectAnnotations, onOpenAnnotationContextMenu, onNavigate,
 }) {
 	const reader = window._reader;
-	const collapsed = !!settings.collapsed;
+	// Beside a snapshot the strip is a list, whatever is set for PDFs.
+	const collapsed = !!settings.collapsed || !host.canAnchor;
 	const showHighlights = !!settings.highlights;
 	const readOnly = !!state.readOnly;
 	const [tick, bump] = useReducer(n => n + 1, 0);
@@ -542,8 +550,12 @@ function Strip({
 	const measuring = useRef(false);
 	const noteColor = useRef(null);
 	const draftCount = useRef(0);
+	// The annotations with the places the strip orders them by.
+	const annotations = useMemo(() => host.withPlaces(state.annotations), [host, state.annotations]);
+	const annotationsRef = useRef(annotations);
 	activeRef.current = activeId;
 	draftRef.current = draft;
+	annotationsRef.current = annotations;
 
 	useEffect(() => {
 		host.setWidth(settings.width);
@@ -750,23 +762,23 @@ function Strip({
 		activate(id);
 	}, [activate, endDraft, onSelectAnnotations, reader, readOnly]);
 
-	// A note for the page being read: stored at the start of that page, after
-	// the notes already there.
-	const startPageNote = useCallback(() => {
-		const pageIndex = host.currentPageIndex;
-		const { slot, sortIndex } = pageStartSlot(pageIndex, reader._state.annotations);
-		const spot = host.pageStartSpot(pageIndex, slot);
-		if (spot) startDraft({ ...spot, sortIndex });
-	}, [host, reader, startDraft]);
-	actions.current.newNote = startPageNote;
+	// A note that follows an entry of the list: stored at the same place in
+	// the text as that entry, and ordered right after it.
+	const startNoteAfter = useCallback((target) => {
+		const spot = host.spotAfter(target);
+		if (!spot) return;
+		startDraft({ ...spot, sortIndex: sortIndexAfter(target.sortIndex, annotationsRef.current) });
+	}, [host, startDraft]);
 
-	// A click on empty space starts a note: anchored, on the line clicked;
-	// as a list, for the page being read.
-	function handleStripClick(event) {
-		if (event.target !== event.currentTarget || readOnly) return;
-		if (collapsed) startPageNote();
-		else startDraft(host.spotAt(event.clientY));
-	}
+	// A note for what is being read (the "+" button): after the last thing
+	// listed on the page — beside a snapshot: on the screen —, or with nothing
+	// there yet at a place of its own.
+	const startNoteHere = useCallback(() => {
+		const place = host.readingPlace(annotationsRef.current);
+		if (place?.after) startNoteAfter({ annotation: place.after, sortIndex: place.after.sortIndex });
+		else if (place?.spot) startDraft(place.spot);
+	}, [host, startDraft, startNoteAfter]);
+	actions.current.newNote = startNoteHere;
 
 	// The outline. The reader reads it only when its own outline tab is
 	// opened (`null` until then), so ask for it; and have the page texts
@@ -777,11 +789,15 @@ function Strip({
 		outlineAsked.current = true;
 		host.loadOutline();
 	}, [state.outline, host]);
-	const headings = useMemo(() => flattenOutline(state.outline), [state.outline]);
+	const headings = useMemo(() => {
+		const flat = flattenOutline(state.outline);
+		host.prepareHeadings(flat);
+		return flat;
+	}, [state.outline, host]);
 	useEffect(() => {
 		let cancelled = false;
 		const pages = [...new Set(headings.map(heading => heading.pageIndex))]
-			.filter(pageIndex => !host.hasPageText(pageIndex));
+			.filter(pageIndex => Number.isInteger(pageIndex) && !host.hasPageText(pageIndex));
 		if (!pages.length) return undefined;
 		(async () => {
 			let done = 0;
@@ -802,11 +818,12 @@ function Strip({
 		};
 	}, [headings, host]);
 
-	const annotations = state.annotations;
 	const model = useMemo(() => {
 		const entries = buildEntries({
 			annotations,
-			headings: headings.map(heading => ({ ...heading, sortIndex: host.headingSortIndex(heading) })),
+			headings: headings
+				.map(heading => ({ ...heading, sortIndex: host.headingSortIndex(heading) }))
+				.filter(heading => heading.sortIndex),
 			draft,
 			activeId,
 			showHighlights,
@@ -854,6 +871,40 @@ function Strip({
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- scrollSlot is the trigger
 	}, [model, collapsed, activeId, host, scrollSlot]);
 
+	// A click on empty space starts a note: anchored, on the line clicked; as
+	// a list, after the entry above the click.
+	function handleStripClick(event) {
+		if (event.target !== event.currentTarget || readOnly) return;
+		if (!collapsed) {
+			startDraft(host.spotAt(event.clientY));
+			return;
+		}
+		let above = null;
+		for (const el of event.currentTarget.children) {
+			if (!el.dataset.entryId) continue;
+			if (el.getBoundingClientRect().top > event.clientY) break;
+			above = el.dataset.entryId;
+		}
+		const entry = above && model.entries.find(x => x.id === above);
+		if (!entry) {
+			startNoteHere();
+		}
+		else if (entry.kind === "heading") {
+			startNoteAfter({ heading: entry.heading, sortIndex: entry.sortIndex });
+		}
+		else if (entry.annotation._draft) {
+			// Under the note being written: after it, if it has become an
+			// annotation; if nothing was typed, in its place.
+			const { createdId, position, pageLabel, sortIndex, anchor } = entry.annotation;
+			const made = createdId && reader._state.annotations.find(x => x.id === createdId);
+			if (made) startNoteAfter({ annotation: made, sortIndex: made.sortIndex });
+			else startDraft({ position, pageLabel, sortIndex, anchor });
+		}
+		else {
+			startNoteAfter({ annotation: entry.annotation, sortIndex: entry.annotation.sortIndex });
+		}
+	}
+
 	const nothing = collapsed && !visible.some(entry => entry.kind === "annotation");
 
 	return (
@@ -895,7 +946,9 @@ function Strip({
 				<div className="zf-evo-empty">
 					{colors.size
 						? "Nothing in this colour."
-						: readOnly ? "No comments." : "No comments yet. Click here to write a note for this page."}
+						: readOnly
+							? "No comments."
+							: `No comments yet. Click here to write a note${paged ? " for this page" : ""}.`}
 				</div>
 			)}
 		</div>
@@ -903,7 +956,7 @@ function Strip({
 }
 
 /** The head and the strip, which share the colour filter. */
-function StripRoot({ host, state, settings, ...handlers }) {
+function StripRoot({ host, state, settings, paged, ...handlers }) {
 	const [colors, setColors] = useState(() => new Set());
 	const actions = useRef({});
 
@@ -930,6 +983,7 @@ function StripRoot({ host, state, settings, ...handlers }) {
 					settings={settings}
 					colors={colors}
 					readOnly={!!state.readOnly}
+					paged={paged}
 					onToggleColor={toggleColor}
 					onToggleHighlights={toggleHighlights}
 					onNewNote={newNote}
@@ -943,6 +997,7 @@ function StripRoot({ host, state, settings, ...handlers }) {
 					settings={settings}
 					colors={colors}
 					actions={actions}
+					paged={paged}
 					{...handlers}
 				/>,
 				host.mount
@@ -951,14 +1006,14 @@ function StripRoot({ host, state, settings, ...handlers }) {
 	);
 }
 
-function useStripHost(view) {
+function useStripHost(view, type) {
 	const [host, setHost] = useState(null);
 	useEffect(() => {
 		if (!view) return undefined;
 		let created;
 		let gone = false;
 		try {
-			created = new EvoStripHost(view);
+			created = type === "pdf" ? new PdfStripHost(view) : new DomStripHost(view);
 			created.setVisible(true);
 		}
 		catch (e) {
@@ -977,26 +1032,27 @@ function useStripHost(view) {
 			created.destroy();
 			setHost(null);
 		};
-	}, [view]);
+	}, [view, type]);
 	return host;
 }
 
 /**
- * Rendered once by ReaderUI. Draws nothing in the reader's own document:
- * the strip is drawn through portals into its documents inside the PDF view.
+ * Rendered once by ReaderUI. Draws nothing where it stands in the reader's
+ * tree: the strip is drawn through portals into its own documents.
  */
 export default function EvoNoteStrip(props) {
 	const settings = props.state[NOTE_STRIP_STATE];
-	const view = props.type === "pdf" && settings?.visible
+	const view = hasNoteStrip(props.type) && settings?.visible
 		? window._reader?._primaryView || null
 		: null;
-	const host = useStripHost(view);
+	const host = useStripHost(view, props.type);
 	if (!host || !settings?.visible) return null;
 	return (
 		<StripRoot
 			host={host}
 			state={props.state}
 			settings={settings}
+			paged={props.type === "pdf"}
 			onUpdateAnnotations={props.onUpdateAnnotations}
 			onSelectAnnotations={props.onSelectAnnotations}
 			onOpenAnnotationContextMenu={props.onOpenAnnotationContextMenu}

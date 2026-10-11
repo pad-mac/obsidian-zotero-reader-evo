@@ -25,19 +25,77 @@ body.zf-evo-toolbar-hidden {
 	.split-view,
 	#sidebarContainer,
 	.sidebar-resizer,
-	#zf-sidebar-backdrop {
+	#zf-sidebar-backdrop,
+	#zf-evo-strip-column {
 		top: 0;
+	}
+}
+
+// ---------------------------------------------------------------------
+// Note strip beside a snapshot (src/evo/strip-host-dom.js): a column in
+// this document at the far side, for which the views give up some width —
+// as they do for the sidebar at the near side.
+// (Beside a PDF the column is inside the PDF view; strip-host-pdf.js.)
+// ---------------------------------------------------------------------
+
+body.zf-evo-side-strip {
+	#split-view,
+	.split-view {
+		inset-inline-end: var(--zf-evo-strip-width, 320px);
+	}
+}
+
+#zf-evo-strip-column {
+	display: none;
+	position: absolute;
+	top: 41px;
+	bottom: var(--bottom-placeholder-height, 0px);
+	inset-inline-end: 0;
+	width: var(--zf-evo-strip-width, 320px);
+	box-sizing: border-box;
+	background-color: var(--color-toolbar, var(--background-primary, #fff));
+	border-inline-start: 1px solid var(--background-modifier-border, rgba(128, 128, 128, 0.25));
+
+	body.zf-evo-side-strip & {
+		display: block;
+	}
+
+	iframe {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 100%;
+		border: 0;
+		display: block;
+		background: transparent;
+	}
+
+	#zf-evo-strip-head {
+		height: var(--zf-evo-head-height, 0px);
+	}
+
+	.zf-evo-clip {
+		position: absolute;
+		top: var(--zf-evo-head-height, 0px);
+		left: 0;
+		right: 0;
+		bottom: 0;
+		overflow: hidden;
+	}
+
+	#zf-evo-strip-frame {
+		height: 100%;
 	}
 }
 
 // ---------------------------------------------------------------------
 // Note strip (src/evo/).
 //
-// The strip is two documents of its own inside the PDF view (the pinned head
-// and the strip); strip-host.js gives each a copy of this stylesheet, and
-// only there does the root carry `zf-evo-strip-doc`. Where they sit in the
-// PDF view is styled in strip-host.js, because that document does not load
-// this stylesheet.
+// The strip is two documents of its own (the pinned head and the strip);
+// strip-host.js gives each a copy of this stylesheet, and only there does the
+// root carry `zf-evo-strip-doc`. Where they sit inside the PDF view is styled
+// in strip-host-pdf.js, because that document does not load this stylesheet;
+// where they sit beside a snapshot is styled above.
 //
 // One strip line is `--zf-evo-line` high. strip-layout.mjs works with the
 // same number (LINE_HEIGHT); change both together.
