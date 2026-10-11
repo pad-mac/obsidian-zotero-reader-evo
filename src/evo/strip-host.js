@@ -252,6 +252,44 @@ export class EvoStripHost {
 		this.stripWin.addEventListener("keydown", this._onKey);
 		this.stripWin.addEventListener("keyup", this._onKey);
 		this.container.addEventListener("scroll", this._onScroll, { passive: true });
+		// Whether a mouse button is held on the pages, and whether that press
+		// turned into a drag (see afterPointer()). Chrome ends the pointer
+		// events when a drag starts, so the end of the drag counts too.
+		this._pointerDown = false;
+		this._dragged = false;
+		this._pointerWaiters = [];
+		this._onPointerDown = () => {
+			this._pointerDown = true;
+			this._dragged = false;
+		};
+		this._onDragStart = () => {
+			this._dragged = true;
+		};
+		const pointerEnded = () => {
+			if (!this._pointerDown) return;
+			this._pointerDown = false;
+			const waiters = this._pointerWaiters;
+			this._pointerWaiters = [];
+			for (const waiter of waiters) waiter(this._dragged);
+		};
+		this._onPointerEnd = (event) => {
+			if (event.type !== "pointercancel") {
+				pointerEnded();
+				return;
+			}
+			// A starting drag cancels the pointer; that is not the end of
+			// the press. Whichever of the two events comes first, the drag
+			// is known a moment later.
+			this.win.setTimeout(() => {
+				if (!this._dragged) pointerEnded();
+			}, 50);
+		};
+		this.win.addEventListener("pointerdown", this._onPointerDown, true);
+		this.win.addEventListener("dragstart", this._onDragStart, true);
+		for (const type of ["pointerup", "pointercancel", "dragend"]) {
+			this.win.addEventListener(type, this._onPointerEnd, true);
+		}
+
 		// Where `overflow: clip` is not supported the box can still be scrolled
 		// by a focus; put it back.
 		this.clip.addEventListener("scroll", () => {
@@ -265,6 +303,24 @@ export class EvoStripHost {
 		this._resizeObserver.observe(this.container);
 
 		this._applyMode();
+	}
+
+	/**
+	 * Call `run` once no mouse button is held on the pages: at once, or when
+	 * the press ends. It is told whether the press became a drag. Taking the
+	 * keyboard focus while an annotation is being pressed or dragged would
+	 * get in the way of the drag.
+	 * @returns {() => void} Call to give up waiting.
+	 */
+	afterPointer(run) {
+		if (!this._pointerDown) {
+			run(false);
+			return () => {};
+		}
+		this._pointerWaiters.push(run);
+		return () => {
+			this._pointerWaiters = this._pointerWaiters.filter(x => x !== run);
+		};
 	}
 
 	/** @param {(event: { type: "geometry" | "scroll" }) => void} listener */
@@ -543,6 +599,12 @@ export class EvoStripHost {
 		this._listeners.clear();
 		this._resizeObserver.disconnect();
 		this.container.removeEventListener("scroll", this._onScroll);
+		this.win.removeEventListener("pointerdown", this._onPointerDown, true);
+		this.win.removeEventListener("dragstart", this._onDragStart, true);
+		for (const type of ["pointerup", "pointercancel", "dragend"]) {
+			this.win.removeEventListener(type, this._onPointerEnd, true);
+		}
+		this._pointerWaiters = [];
 		unfollowTheme(this.stripDoc);
 		const root = this.doc.documentElement;
 		const wasVisible = root.classList.contains(ON_CLASS);

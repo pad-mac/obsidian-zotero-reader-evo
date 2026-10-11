@@ -18,7 +18,7 @@ import { createPortal } from "react-dom";
 import cx from "classnames";
 import { ObsidianBridge } from "../obsidian-adapter";
 import { ANNOTATION_COLORS } from "../common/defines";
-import { NOTE_STRIP_STATE } from "../obsidian-evo";
+import { NOTE_STRIP_STATE, applyNoteStrip } from "../obsidian-evo";
 import { EvoStripHost } from "./strip-host";
 import { estimateHeight, layoutCards } from "./strip-layout.mjs";
 
@@ -124,7 +124,7 @@ function focusEditor(editor, win) {
 	}
 }
 
-function StripEditor({ id, text, focusToken, onChange, onEscape }) {
+function StripEditor({ id, text, focusToken, host, onChange, onEscape }) {
 	const holderRef = useRef();
 	const editorRef = useRef(null);
 	const textRef = useRef(text || "");
@@ -186,9 +186,19 @@ function StripEditor({ id, text, focusToken, onChange, onEscape }) {
 	useEffect(() => {
 		if (!focusToken) return undefined;
 		const win = holderRef.current.ownerDocument.defaultView;
-		const timer = win.setTimeout(() => focusEditor(editorRef.current, win), FOCUS_DELAY);
-		return () => win.clearTimeout(timer);
-	}, [focusToken, id]);
+		let giveUp = () => {};
+		const timer = win.setTimeout(() => {
+			// Not while the annotation is still being pressed, and not at all
+			// if the press became a drag (into a note, say).
+			giveUp = host.afterPointer((dragged) => {
+				if (!dragged) focusEditor(editorRef.current, win);
+			});
+		}, FOCUS_DELAY);
+		return () => {
+			win.clearTimeout(timer);
+			giveUp();
+		};
+	}, [focusToken, id, host]);
 
 	return <div className="zf-evo-editor editor" ref={holderRef}/>;
 }
@@ -252,7 +262,7 @@ function StripPreview({ text, lazy }) {
  * ------------------------------------------------------------------ */
 
 function Card({
-	annotation, place, active, list, focusToken, readOnly,
+	annotation, place, active, list, focusToken, readOnly, host,
 	onActivate, onDeactivate, onChange, onMeasure, onColor, onMenu, onLeave,
 }) {
 	const rootRef = useRef();
@@ -342,6 +352,7 @@ function Card({
 								id={annotation.id}
 								text={annotation.comment}
 								focusToken={focusToken}
+								host={host}
 								onChange={text => onChange(annotation.id, text)}
 								onEscape={onLeave}
 							/>
@@ -624,6 +635,7 @@ function Strip({ host, state, settings, onUpdateAnnotations, onSelectAnnotations
 					list={collapsed}
 					focusToken={item.id === activeId ? focusToken : 0}
 					readOnly={readOnly}
+					host={host}
 					onActivate={handleActivate}
 					onDeactivate={deactivate}
 					onChange={handleChange}
@@ -640,9 +652,7 @@ function Strip({ host, state, settings, onUpdateAnnotations, onSelectAnnotations
 function useStripHost(view) {
 	const [host, setHost] = useState(null);
 	useEffect(() => {
-		if (!view?._iframeWindow?.document?.getElementById("viewerContainer")) {
-			return undefined;
-		}
+		if (!view) return undefined;
 		let created;
 		let gone = false;
 		try {
@@ -652,6 +662,9 @@ function useStripHost(view) {
 		catch (e) {
 			console.error("[ZotFlow Evo] The note strip could not start:", e);
 			created?.destroy();
+			// Without the strip the comment popup is needed again: it is
+			// held back only while the strip counts as shown.
+			applyNoteStrip(window._reader, { visible: false });
 			return undefined;
 		}
 		created.ready.then(() => {
