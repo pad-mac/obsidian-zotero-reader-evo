@@ -54,6 +54,10 @@ export class DomStripHost extends StripHost {
 		document.body.style.setProperty("--zf-evo-strip-width", px + "px");
 	}
 
+	get stripOnRight() {
+		return getComputedStyle(document.documentElement).direction !== "rtl";
+	}
+
 	/** Where an annotation or a heading is on screen, or null if it cannot be found (or is not shown). */
 	_rectOf(position) {
 		try {

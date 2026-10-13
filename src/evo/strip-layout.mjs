@@ -6,7 +6,7 @@
 /** Height of one strip line in CSS pixels. Keep in step with `--zf-evo-line` in `_evo.scss`. */
 export const LINE_HEIGHT = 20;
 
-/** Lines a comment keeps when it would run into the next one. */
+/** Lines a comment keeps when the next one starts on its line. */
 export const CLAMP_LINES = 2;
 
 /**
@@ -24,14 +24,15 @@ export function lineAt(offsetInPage, lineHeight = LINE_HEIGHT) {
 /**
  * Place the comments.
  *
- * Every comment starts on its own line (`anchor`). Only where a comment would
- * really run into the next one does anything change:
- *  - a comment taller than `clampLines` is cut to that many lines (and drawn
- *    fading out);
- *  - if it still reaches the next comment's line, the next one moves down
- *    just far enough.
- * Nothing is ever hidden entirely, and a comment that has room keeps its
- * full height.
+ * Every comment starts on its own line (`anchor`) and keeps its full height
+ * as long as it has room. Where it would run into the next one:
+ *  - if the next one starts at least a line further down, the comment is
+ *    cut where they meet (and drawn fading out); the next one keeps its
+ *    line;
+ *  - if the next one starts on the same line (or was itself pushed onto
+ *    it), the comment keeps up to `clampLines` lines (fading out if cut)
+ *    and the next one moves down below it.
+ * Nothing is ever hidden entirely.
  *
  * @param {{ id: string, anchor: number, natural: number }[]} items Sorted by
  *   `anchor`. `natural` is the comment's full height.
@@ -48,9 +49,17 @@ export function layoutCards(items, { lineHeight = LINE_HEIGHT, clampLines = CLAM
 		const natural = Math.max(lineHeight, item.natural || lineHeight);
 		let height = natural;
 		let clamped = false;
-		if (next && natural > next.anchor - top && natural > limit) {
-			height = limit;
-			clamped = true;
+		if (next) {
+			const room = next.anchor - top;
+			if (natural > room) {
+				if (room >= lineHeight) {
+					height = room;
+				}
+				else {
+					height = Math.min(natural, limit);
+				}
+				clamped = height < natural;
+			}
 		}
 		placed.set(item.id, { top, height, clamped });
 		floor = top + height;
@@ -205,6 +214,41 @@ export function flattenOutline(outline) {
 		});
 	};
 	walk(outline, 0, []);
+	return out;
+}
+
+/**
+ * The strip's entries with the contents of collapsed headings left out: a
+ * collapsed heading hides what follows it up to the next heading of its own
+ * depth or above. Each heading entry gets `hasContent` (whether anything
+ * follows it before such a heading), so that only those are offered to be
+ * collapsed.
+ *
+ * @param {object[]} entries In order (buildEntries()).
+ * @param {Set<string>} collapsed Ids of collapsed headings.
+ */
+export function foldEntries(entries, collapsed) {
+	const out = [];
+	let hiddenBelow = null; // depth of the collapsed heading hiding the entries
+	for (let i = 0; i < entries.length; i++) {
+		const entry = entries[i];
+		const depth = entry.kind === "heading" ? entry.heading.depth : null;
+		if (hiddenBelow !== null) {
+			if (depth === null || depth > hiddenBelow) continue;
+			hiddenBelow = null;
+		}
+		if (depth !== null) {
+			const following = entries[i + 1];
+			const hasContent = !!following
+				&& (following.kind !== "heading" || following.heading.depth > depth);
+			const folded = hasContent && collapsed.has(entry.id);
+			out.push({ ...entry, hasContent, folded });
+			if (folded) hiddenBelow = depth;
+		}
+		else {
+			out.push(entry);
+		}
+	}
 	return out;
 }
 

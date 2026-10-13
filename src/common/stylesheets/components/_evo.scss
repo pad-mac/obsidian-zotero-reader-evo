@@ -136,14 +136,63 @@ html.zf-evo-strip-doc {
 		user-select: none;
 	}
 
-	.zf-evo-head-title {
-		padding: 4px 10px 0;
-		overflow: hidden;
+	// Two lines: the authors with the year at the right end, then the title.
+	// Same size and colour; the title only bold.
+	.zf-evo-head-byline {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		padding: 5px 10px 0;
 		color: var(--text-muted, #666);
 		font-size: 12px;
 		line-height: 18px;
+	}
+
+	.zf-evo-head-authors {
+		flex: 1 1 auto;
+		min-width: 0;
+		overflow: hidden;
 		white-space: nowrap;
-		text-overflow: ellipsis;
+
+		// Too many to fit: they fade out before the year.
+		&.is-overflowing {
+			-webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+			mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+		}
+	}
+
+	.zf-evo-head-year {
+		flex: none;
+		margin-inline-start: auto;
+		font-variant-numeric: tabular-nums;
+		font-feature-settings: "tnum";
+	}
+
+	.zf-evo-head-title {
+		padding: 1px 10px 0;
+		color: var(--text-muted, #666);
+		font-size: 12px;
+		font-weight: 600;
+		line-height: 18px;
+		overflow-wrap: anywhere;
+	}
+
+	// The edge towards the document: dragged to resize the strip.
+	.zf-evo-resize {
+		position: fixed;
+		top: 0;
+		bottom: 0;
+		inset-inline-start: 0;
+		z-index: 10;
+		width: 5px;
+		cursor: col-resize;
+		touch-action: none;
+
+		&:hover,
+		&.is-dragging {
+			background-color: var(--interactive-accent, var(--text-accent, #5b5bd6));
+			opacity: 0.5;
+		}
 	}
 
 	.zf-evo-head-tools {
@@ -271,6 +320,18 @@ html.zf-evo-strip-doc {
 		&.is-comment {
 			cursor: text;
 		}
+
+		// Alt held while pressing: the text is selected, not dragged.
+		&.is-selecting {
+			cursor: text;
+		}
+	}
+
+	// The text can be selected (with Alt, since a plain press drags the row)
+	// and stays selected afterwards.
+	.zf-evo-quote,
+	.zf-evo-preview {
+		user-select: text;
 	}
 
 	.zf-evo-row + .zf-evo-row {
@@ -376,12 +437,12 @@ html.zf-evo-strip-doc {
 	}
 
 	// An outline heading: plain text, the size of everything else, a little
-	// bolder.
+	// bolder, indented by its depth in the outline.
 	.zf-evo-heading {
 		position: absolute;
 		left: 0;
 		right: 0;
-		padding-inline: var(--zf-evo-gutter) 8px;
+		padding-inline: calc(var(--zf-evo-gutter) + var(--zf-evo-depth, 0) * 12px) 8px;
 		overflow: hidden;
 		font-weight: 600;
 		white-space: nowrap;
@@ -392,14 +453,57 @@ html.zf-evo-strip-doc {
 
 	.zf-evo-strip.is-list .zf-evo-heading {
 		position: relative;
+		display: flex;
+		align-items: flex-start;
 		margin: 16px 0 10px;
+		// The fold arrow stands in the gutter.
+		padding-inline-start: calc(var(--zf-evo-depth, 0) * 12px);
 		white-space: normal;
-		// Takes the page to the chapter.
-		cursor: pointer;
 
 		&:first-child {
 			margin-top: 0;
 		}
+
+		// Folded headings follow each other closely.
+		&.is-folded + .zf-evo-heading {
+			margin-top: 4px;
+		}
+	}
+
+	.zf-evo-fold {
+		display: inline-flex;
+		flex: none;
+		align-items: center;
+		justify-content: center;
+		width: var(--zf-evo-gutter);
+		height: var(--zf-evo-line);
+		color: var(--text-faint, #999);
+		cursor: pointer;
+
+		&.is-empty {
+			cursor: default;
+		}
+
+		&:not(.is-empty):hover {
+			color: var(--text-normal, inherit);
+		}
+	}
+
+	.zf-evo-chevron {
+		transition: transform 0.12s ease;
+
+		&.is-open {
+			transform: rotate(90deg);
+		}
+	}
+
+	.zf-evo-heading-title {
+		min-width: 0;
+	}
+
+	.zf-evo-strip.is-list .zf-evo-heading-title {
+		// Takes the page to the chapter.
+		cursor: pointer;
 
 		&:hover {
 			color: var(--text-accent, var(--interactive-accent, inherit));

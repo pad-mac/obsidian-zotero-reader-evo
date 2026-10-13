@@ -31,7 +31,7 @@ import { NOTE_STRIP_STATE, applyNoteStrip, hasNoteStrip, reportNoteStrip } from 
 import { PdfStripHost } from "./strip-host-pdf";
 import { DomStripHost } from "./strip-host-dom";
 import {
-	buildEntries, estimateHeight, flattenOutline, layoutCards, sortIndexAfter, usedColors, LINE_HEIGHT,
+	buildEntries, estimateHeight, flattenOutline, foldEntries, layoutCards, sortIndexAfter, usedColors, LINE_HEIGHT,
 } from "./strip-layout.mjs";
 
 export { hasNoteStrip };
@@ -271,6 +271,36 @@ function StripPreview({ text, lazy }) {
  * One entry
  * ------------------------------------------------------------------ */
 
+/**
+ * The first line of an entry is indented by the width of the page number in
+ * front of it. The width is measured, and measured again whenever it
+ * changes: a number measured before the strip was laid out, or before its
+ * font arrived, would otherwise leave the text running over it. One observer
+ * per document serves all entries.
+ */
+const indentObservers = new WeakMap();
+
+function setIndent(card, width) {
+	card.style.setProperty("--zf-evo-indent", (width ? width + 6 : 0) + "px");
+}
+
+function watchIndent(pageEl, card) {
+	const win = pageEl.ownerDocument.defaultView;
+	let observer = indentObservers.get(win);
+	if (!observer) {
+		observer = new win.ResizeObserver((records) => {
+			for (const record of records) {
+				const target = record.target.closest(".zf-evo-card");
+				if (target) setIndent(target, record.target.offsetWidth);
+			}
+		});
+		indentObservers.set(win, observer);
+	}
+	setIndent(card, pageEl.offsetWidth);
+	observer.observe(pageEl);
+	return () => observer.unobserve(pageEl);
+}
+
 /** What was marked on the page: the highlighted text, or the picture. */
 function Marked({ annotation }) {
 	if (annotation.type === "image" || annotation.type === "ink") {
@@ -305,10 +335,7 @@ function Card({
 
 	// The first line is indented by the width of the page number in front of
 	// it; the lines after it start underneath the number.
-	useLayoutEffect(() => {
-		const width = pageRef.current?.offsetWidth || 0;
-		rootRef.current.style.setProperty("--zf-evo-indent", (width ? width + 6 : 0) + "px");
-	}, [annotation.pageLabel]);
+	useLayoutEffect(() => watchIndent(pageRef.current, rootRef.current), []);
 
 	function handleBlur(event) {
 		if (!active) return;
@@ -325,7 +352,30 @@ function Card({
 
 	function handleClick(event) {
 		if (active) return;
+		// Text was selected (Alt and drag): leave the selection be.
+		const selection = rootRef.current.ownerDocument.getSelection();
+		if (selection && !selection.isCollapsed && rootRef.current.contains(selection.anchorNode)) return;
 		onActivate(annotation, event);
+	}
+
+	// A row is dragged into a note. With Alt held the press selects text
+	// instead: the row stops being draggable until the button is let go.
+	function handlePointerDown(event) {
+		if (!event.altKey || event.button !== 0) return;
+		const row = event.target.closest?.(".zf-evo-row");
+		if (!row || !row.draggable) return;
+		row.draggable = false;
+		row.classList.add("is-selecting");
+		const doc = row.ownerDocument;
+		const restore = () => {
+			doc.removeEventListener("pointerup", restore, true);
+			doc.removeEventListener("pointercancel", restore, true);
+			row.classList.remove("is-selecting");
+			// Back as React rendered it.
+			row.draggable = row.dataset.draggable === "true";
+		};
+		doc.addEventListener("pointerup", restore, true);
+		doc.addEventListener("pointercancel", restore, true);
 	}
 
 	function startDrag(event, source) {
@@ -366,6 +416,7 @@ function Card({
 			data-entry-id={entry.id}
 			data-annotation-id={annotation._draft ? undefined : annotation.id}
 			onClick={handleClick}
+			onPointerDownCapture={handlePointerDown}
 			onBlur={handleBlur}
 			onContextMenu={handleContextMenu}
 		>
@@ -376,6 +427,7 @@ function Card({
 						<div
 							className="zf-evo-row is-highlight is-first"
 							draggable={!annotation._draft}
+							data-draggable={String(!annotation._draft)}
 							onDragStart={event => startDrag(event, "highlight")}
 						>
 							<span className="zf-evo-bars" aria-hidden="true">
@@ -388,6 +440,7 @@ function Card({
 						<div
 							className={cx("zf-evo-row is-comment", { "is-first": !parts.highlight })}
 							draggable={!active && !annotation._draft}
+							data-draggable={String(!active && !annotation._draft)}
 							onDragStart={event => startDrag(event, "comment")}
 						>
 							<span className="zf-evo-bars" aria-hidden="true">
@@ -428,18 +481,52 @@ function Card({
 	);
 }
 
-function Heading({ entry, place, list, onOpen }) {
+function IconChevron({ open }) {
+	return (
+		<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" className={cx("zf-evo-chevron", { "is-open": open })}>
+			<path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+		</svg>
+	);
+}
+
+function Heading({ entry, place, list, onOpen, onFold }) {
 	const { heading } = entry;
+	// As a list a chapter can be folded away; beside the page everything
+	// stays where it is.
+	const foldable = list && entry.hasContent;
+	function handleFold(event) {
+		event.stopPropagation();
+		onFold(entry, event.altKey);
+	}
 	return (
 		<div
-			className="zf-evo-heading"
-			style={!list && place ? { top: place.top, height: place.height } : undefined}
+			className={cx("zf-evo-heading", { "is-folded": entry.folded })}
+			style={{
+				"--zf-evo-depth": heading.depth || 0,
+				...(!list && place ? { top: place.top, height: place.height } : null),
+			}}
 			data-entry-id={entry.id}
 			data-depth={heading.depth}
 			title={heading.title}
-			onClick={list ? () => onOpen(heading) : undefined}
 		>
-			{heading.title}
+			{list && (
+				<span
+					className={cx("zf-evo-fold", { "is-empty": !foldable })}
+					role={foldable ? "button" : undefined}
+					aria-label={foldable ? (entry.folded ? "Unfold" : "Fold") : undefined}
+					aria-expanded={foldable ? !entry.folded : undefined}
+					title={foldable ? "Fold or unfold (with Alt: all headings of this level)" : undefined}
+					onClick={foldable ? handleFold : undefined}
+				>
+					{foldable && <IconChevron open={!entry.folded}/>}
+				</span>
+			)}
+			<span
+				className="zf-evo-heading-title"
+				onClick={list ? () => onOpen(heading) : undefined}
+			>
+				{heading.title}
+			</span>
 		</div>
 	);
 }
@@ -447,6 +534,43 @@ function Heading({ entry, place, list, onOpen }) {
 /* ------------------------------------------------------------------ *
  * The head: title line, buttons, colour filters
  * ------------------------------------------------------------------ */
+
+/** The authors on one line, fading out before the year when they do not fit. */
+function Byline({ authors, year }) {
+	const ref = useRef();
+	const [overflowing, setOverflowing] = useState(false);
+	useLayoutEffect(() => {
+		const el = ref.current;
+		if (!el) return undefined;
+		const check = () => setOverflowing(el.scrollWidth > el.clientWidth + 1);
+		check();
+		const observer = new el.ownerDocument.defaultView.ResizeObserver(check);
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, [authors]);
+	return (
+		<div className="zf-evo-head-byline">
+			<span ref={ref} className={cx("zf-evo-head-authors", { "is-overflowing": overflowing })} title={authors}>{authors}</span>
+			{year && <span className="zf-evo-head-year">{year}</span>}
+		</div>
+	);
+}
+
+/**
+ * The two lines above the strip: the authors (all of them) with the year at
+ * the right end, then the full title. `banner` is `{ authors, year, title }`
+ * or just a text (shown as the title).
+ */
+function HeadBanner({ banner }) {
+	if (!banner) return null;
+	const { authors = "", year = "", title = "" } = typeof banner === "string" ? { title: banner } : banner;
+	return (
+		<>
+			{(authors || year) && <Byline authors={authors} year={year}/>}
+			{title && <div className="zf-evo-head-title">{title}</div>}
+		</>
+	);
+}
 
 function IconHighlights() {
 	return (
@@ -479,7 +603,7 @@ function StripHead({ annotations, settings, colors, readOnly, paged, onToggleCol
 	const showHighlights = !!settings.highlights;
 	return (
 		<div className="zf-evo-head">
-			{settings.banner && <div className="zf-evo-head-title" title={settings.banner}>{settings.banner}</div>}
+			<HeadBanner banner={settings.banner}/>
 			<div className="zf-evo-head-tools">
 				<button
 					type="button"
@@ -529,7 +653,7 @@ function StripHead({ annotations, settings, colors, readOnly, paged, onToggleCol
  * ------------------------------------------------------------------ */
 
 function Strip({
-	host, state, settings, colors, actions, paged,
+	host, state, settings, colors, actions, paged, folded, onFold,
 	onUpdateAnnotations, onSelectAnnotations, onOpenAnnotationContextMenu, onNavigate,
 }) {
 	const reader = window._reader;
@@ -550,6 +674,9 @@ function Strip({
 	const measuring = useRef(false);
 	const noteColor = useRef(null);
 	const draftCount = useRef(0);
+	// Whether the comment of the open entry was written in since it was
+	// opened (see the Delete key below).
+	const touched = useRef(false);
 	// The annotations with the places the strip orders them by.
 	const annotations = useMemo(() => host.withPlaces(state.annotations), [host, state.annotations]);
 	const annotationsRef = useRef(annotations);
@@ -566,10 +693,15 @@ function Strip({
 
 	useEffect(() => host.on((event) => {
 		if (event.type === "geometry") bump();
+		else if (event.type === "resized") {
+			// Dragged wider or narrower: kept by the plugin, for every reader.
+			reportNoteStrip(reader, { width: event.width });
+		}
 		else setScrollSlot(Math.floor(host.scrollTop / SCROLL_STEP));
-	}), [host]);
+	}), [host, reader]);
 
 	const activate = useCallback((id) => {
+		touched.current = false;
 		setActiveId(id);
 		setFocusToken(token => token + 1);
 	}, []);
@@ -666,6 +798,7 @@ function Strip({
 	}, [host]);
 
 	const handleChange = useCallback((id, text) => {
+		if (id === activeRef.current) touched.current = true;
 		const current = draftRef.current;
 		if (current && current.id === id) {
 			if (current.createdId) {
@@ -780,6 +913,59 @@ function Strip({
 	}, [host, startDraft, startNoteAfter]);
 	actions.current.newNote = startNoteHere;
 
+	// A new note right under an entry of the list (see handleStripClick()).
+	const startNoteUnder = useCallback((entry) => {
+		if (entry.kind === "heading") {
+			startNoteAfter({ heading: entry.heading, sortIndex: entry.sortIndex });
+		}
+		else if (entry.annotation._draft) {
+			// Under the note being written: after it, if it has become an
+			// annotation; if nothing was typed, in its place.
+			const { createdId, position, pageLabel, sortIndex, anchor } = entry.annotation;
+			const made = createdId && reader._state.annotations.find(x => x.id === createdId);
+			if (made) startNoteAfter({ annotation: made, sortIndex: made.sortIndex });
+			else startDraft({ position, pageLabel, sortIndex, anchor });
+		}
+		else {
+			startNoteAfter({ annotation: entry.annotation, sortIndex: entry.annotation.sortIndex });
+		}
+	}, [reader, startDraft, startNoteAfter]);
+	const entriesRef = useRef([]);
+
+	// Keys while an entry is open:
+	//  - Shift+Enter starts a new note under it (under a highlight's comment:
+	//    a note of its own, right after the highlight);
+	//  - Delete or Backspace in the comment of an annotation, while the
+	//    comment is empty and nothing was typed since it was opened, deletes
+	//    the annotation — as in the reader's own comment popup.
+	useEffect(() => {
+		const doc = host.stripDoc;
+		const onKeyDown = (event) => {
+			const id = activeRef.current;
+			if (!id || readOnly || event.ctrlKey || event.metaKey || event.altKey) return;
+			if (event.key === "Enter" && event.shiftKey) {
+				const entry = entriesRef.current.find(x => x.id === id);
+				if (!entry) return;
+				event.preventDefault();
+				event.stopPropagation();
+				startNoteUnder(entry);
+				return;
+			}
+			if ((event.key === "Delete" || event.key === "Backspace") && !event.shiftKey) {
+				if (touched.current || draftRef.current?.id === id) return;
+				const annotation = reader._state.annotations.find(x => x.id === id);
+				if (!annotation || annotation.readOnly || annotation.comment) return;
+				event.preventDefault();
+				event.stopPropagation();
+				setActiveId(null);
+				reader.deleteAnnotations([id]);
+				host.focusView();
+			}
+		};
+		doc.addEventListener("keydown", onKeyDown, true);
+		return () => doc.removeEventListener("keydown", onKeyDown, true);
+	}, [host, reader, readOnly, startNoteUnder]);
+
 	// The outline. The reader reads it only when its own outline tab is
 	// opened (`null` until then), so ask for it; and have the page texts
 	// read that put its headings in order among the annotations.
@@ -829,7 +1015,7 @@ function Strip({
 			showHighlights,
 			colors,
 		});
-		if (collapsed) return { entries, placed: null };
+		if (collapsed) return { entries: foldEntries(entries, folded), placed: null };
 		// Anchored: every entry on its line, beside its place on the page.
 		const items = [];
 		for (const entry of entries) {
@@ -854,7 +1040,7 @@ function Strip({
 		// `tick` stands for what the host measures (page positions, zoom, page
 		// texts) and for the heights in `heights`, none of which React sees.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [annotations, headings, activeId, draft, collapsed, showHighlights, colors, tick, host]);
+	}, [annotations, headings, activeId, draft, collapsed, showHighlights, colors, folded, tick, host]);
 
 	// Anchored, only the entries near the visible part are rendered.
 	// `scrollSlot` changes every SCROLL_STEP pixels of scrolling, which is
@@ -886,24 +1072,19 @@ function Strip({
 			above = el.dataset.entryId;
 		}
 		const entry = above && model.entries.find(x => x.id === above);
-		if (!entry) {
-			startNoteHere();
-		}
-		else if (entry.kind === "heading") {
-			startNoteAfter({ heading: entry.heading, sortIndex: entry.sortIndex });
-		}
-		else if (entry.annotation._draft) {
-			// Under the note being written: after it, if it has become an
-			// annotation; if nothing was typed, in its place.
-			const { createdId, position, pageLabel, sortIndex, anchor } = entry.annotation;
-			const made = createdId && reader._state.annotations.find(x => x.id === createdId);
-			if (made) startNoteAfter({ annotation: made, sortIndex: made.sortIndex });
-			else startDraft({ position, pageLabel, sortIndex, anchor });
-		}
-		else {
-			startNoteAfter({ annotation: entry.annotation, sortIndex: entry.annotation.sortIndex });
-		}
+		if (entry) startNoteUnder(entry);
+		else startNoteHere();
 	}
+
+	entriesRef.current = model.entries;
+
+	const handleFold = useCallback((entry, all) => {
+		const depth = entry.heading.depth;
+		const ids = all
+			? model.entries.filter(x => x.kind === "heading" && x.heading.depth === depth && x.hasContent).map(x => x.id)
+			: [entry.id];
+		onFold(ids, !entry.folded);
+	}, [model, onFold]);
 
 	const nothing = collapsed && !visible.some(entry => entry.kind === "annotation");
 
@@ -921,6 +1102,7 @@ function Strip({
 						place={model.placed?.get(entry.id)}
 						list={collapsed}
 						onOpen={handleHeading}
+						onFold={handleFold}
 					/>
 				)
 				: (
@@ -958,7 +1140,20 @@ function Strip({
 /** The head and the strip, which share the colour filter. */
 function StripRoot({ host, state, settings, paged, ...handlers }) {
 	const [colors, setColors] = useState(() => new Set());
+	// Outline headings folded away (list only), for this document.
+	const [folded, setFolded] = useState(() => new Set());
 	const actions = useRef({});
+
+	const fold = useCallback((ids, shut) => {
+		setFolded((current) => {
+			const next = new Set(current);
+			for (const id of ids) {
+				if (shut) next.add(id);
+				else next.delete(id);
+			}
+			return next;
+		});
+	}, []);
 
 	const toggleColor = useCallback((color) => {
 		setColors((current) => {
@@ -998,6 +1193,8 @@ function StripRoot({ host, state, settings, paged, ...handlers }) {
 					colors={colors}
 					actions={actions}
 					paged={paged}
+					folded={folded}
+					onFold={fold}
 					{...handlers}
 				/>,
 				host.mount

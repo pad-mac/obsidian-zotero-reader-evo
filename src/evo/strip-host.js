@@ -77,6 +77,14 @@ function copyStyles(from, to) {
 	to.adoptedStyleSheets = adopted;
 }
 
+/** The strip's width in pixels, as it may be set or dragged. */
+export const MIN_WIDTH = 160;
+export const MAX_WIDTH = 900;
+
+function clampWidth(width) {
+	return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.round(width) || 320));
+}
+
 /**
  * The frames, and what does not depend on where they stand. A subclass puts
  * the column somewhere (`_build(parent)`) and answers for places in its
@@ -185,6 +193,10 @@ export class StripHost {
 		this.mount.className = "zf-evo-strip-root";
 		stripDoc.body.appendChild(this.mount);
 
+		// The edge towards the document can be dragged to make the strip
+		// wider or narrower. In both documents, so it runs the full height.
+		for (const doc of [this.headDoc, stripDoc]) this._addResizeHandle(doc);
+
 		this._onKey = this._onKey.bind(this);
 		for (const win of [this.stripWin, this.headWin]) {
 			win.addEventListener("keydown", this._onKey);
@@ -249,14 +261,17 @@ export class StripHost {
 		};
 	}
 
-	/** @param {(event: { type: "geometry" | "scroll" }) => void} listener */
+	/**
+	 * @param {(event: { type: "geometry" | "scroll" | "resized", width?: number }) => void} listener
+	 *   "resized": the strip was dragged to `width` (and let go).
+	 */
 	on(listener) {
 		this._listeners.add(listener);
 		return () => this._listeners.delete(listener);
 	}
 
-	_emit(type) {
-		for (const listener of this._listeners) listener({ type });
+	_emit(type, extra = null) {
+		for (const listener of this._listeners) listener({ type, ...extra });
 	}
 
 	get collapsed() {
@@ -272,7 +287,7 @@ export class StripHost {
 	}
 
 	setWidth(width) {
-		const px = Math.max(160, Math.min(900, Math.round(width) || 320));
+		const px = clampWidth(width);
 		if (px === this._width) return;
 		this._width = px;
 		this._applyWidth(px);
@@ -281,6 +296,60 @@ export class StripHost {
 
 	get width() {
 		return this._width || 320;
+	}
+
+	/** Whether the strip stands at the right of the document (else at the left: right-to-left text). */
+	get stripOnRight() {
+		return true;
+	}
+
+	/**
+	 * A handle along the edge of the strip towards the document. While it is
+	 * dragged only the strip's width changes (`_applyWidth(px, true)`); the
+	 * document is fitted to it, and listeners hear "resized", when it is let
+	 * go. Positions are screen positions: the frame moves under the pointer.
+	 */
+	_addResizeHandle(doc) {
+		const handle = doc.createElement("div");
+		handle.className = "zf-evo-resize";
+		handle.setAttribute("aria-hidden", "true");
+		handle.title = "Drag to resize";
+		doc.body.appendChild(handle);
+		handle.addEventListener("pointerdown", (event) => {
+			if (event.button !== 0) return;
+			event.preventDefault();
+			event.stopPropagation();
+			try {
+				handle.setPointerCapture(event.pointerId);
+			}
+			catch {
+				// Moves outside the frame are then not followed.
+			}
+			const startX = event.screenX;
+			const startWidth = this.width;
+			const sign = this.stripOnRight ? 1 : -1;
+			let width = startWidth;
+			handle.classList.add("is-dragging");
+			const move = (ev) => {
+				width = clampWidth(startWidth + sign * (startX - ev.screenX));
+				this._applyWidth(width, true);
+			};
+			const end = () => {
+				handle.removeEventListener("pointermove", move);
+				handle.removeEventListener("pointerup", end);
+				handle.removeEventListener("pointercancel", end);
+				handle.classList.remove("is-dragging");
+				if (width === startWidth) {
+					this._applyWidth(startWidth, true);
+					return;
+				}
+				this.setWidth(width);
+				this._emit("resized", { width });
+			};
+			handle.addEventListener("pointermove", move);
+			handle.addEventListener("pointerup", end);
+			handle.addEventListener("pointercancel", end);
+		});
 	}
 
 	/** As a list (true), or every entry beside its place (false; only where `canAnchor`). */
@@ -307,8 +376,9 @@ export class StripHost {
 	// eslint-disable-next-line no-unused-vars
 	_showColumn(visible) {}
 
+	/** `live`: while the strip is dragged; the document is fitted at the end. */
 	// eslint-disable-next-line no-unused-vars
-	_applyWidth(px) {}
+	_applyWidth(px, live = false) {}
 
 	/**
 	 * Keys pressed in the strip outside a text box are handled like keys

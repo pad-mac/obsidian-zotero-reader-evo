@@ -10,16 +10,33 @@ test("a comment with room keeps its place and full height", () => {
 	assert.deepEqual(out.b, { top: 400, height: L, clamped: false });
 });
 
-test("a tall comment that would reach the next one is cut to two lines", () => {
+test("a comment that would reach the next one is cut where they meet; the next keeps its line", () => {
 	const out = place([{ id: "a", anchor: 100, natural: 6 * L }, { id: "b", anchor: 100 + 3 * L, natural: L }]);
-	assert.deepEqual(out.a, { top: 100, height: 2 * L, clamped: true });
+	assert.deepEqual(out.a, { top: 100, height: 3 * L, clamped: true });
 	assert.deepEqual(out.b, { top: 100 + 3 * L, height: L, clamped: false }, "the next one stays on its own line");
+	// With five free lines it keeps all five, not two.
+	const wide = place([{ id: "a", anchor: 0, natural: 9 * L }, { id: "b", anchor: 5 * L, natural: L }]);
+	assert.deepEqual(wide.a, { top: 0, height: 5 * L, clamped: true });
+	// One line of room is one line.
+	const tight = place([{ id: "a", anchor: 0, natural: 4 * L }, { id: "b", anchor: L, natural: L }]);
+	assert.deepEqual(tight.a, { top: 0, height: L, clamped: true });
+	assert.equal(tight.b.top, L);
 });
 
-test("comments on adjacent lines: the lower one moves down just enough", () => {
+test("on the same line: the first keeps two lines and fades, the next moves below it", () => {
+	const out = place([{ id: "a", anchor: 100, natural: 6 * L }, { id: "b", anchor: 100, natural: L }]);
+	assert.deepEqual(out.a, { top: 100, height: 2 * L, clamped: true });
+	assert.deepEqual(out.b, { top: 100 + 2 * L, height: L, clamped: false });
+	// A short one is not cut.
+	const short = place([{ id: "a", anchor: 0, natural: L }, { id: "b", anchor: 0, natural: L }]);
+	assert.deepEqual(short.a, { top: 0, height: L, clamped: false });
+	assert.equal(short.b.top, L);
+});
+
+test("pushed onto the line of the next one, a comment counts as on the same line", () => {
 	const out = place([
 		{ id: "a", anchor: 100, natural: 6 * L },
-		{ id: "b", anchor: 100 + L, natural: 4 * L },
+		{ id: "b", anchor: 100, natural: 4 * L },
 		{ id: "c", anchor: 100 + 2 * L, natural: L },
 	]);
 	assert.deepEqual(out.a, { top: 100, height: 2 * L, clamped: true });
@@ -27,10 +44,12 @@ test("comments on adjacent lines: the lower one moves down just enough", () => {
 	assert.deepEqual(out.c, { top: 100 + 4 * L, height: L, clamped: false });
 });
 
-test("a short comment is never cut; the next one is pushed past it", () => {
+test("one line of room is one line even for a short comment; with room it keeps its height", () => {
 	const out = place([{ id: "a", anchor: 100, natural: 2 * L }, { id: "b", anchor: 100 + L, natural: L }]);
-	assert.deepEqual(out.a, { top: 100, height: 2 * L, clamped: false });
-	assert.equal(out.b.top, 100 + 2 * L);
+	assert.deepEqual(out.a, { top: 100, height: L, clamped: true });
+	assert.equal(out.b.top, 100 + L);
+	const roomy = place([{ id: "a", anchor: 0, natural: 2 * L }, { id: "b", anchor: 2 * L, natural: L }]);
+	assert.deepEqual(roomy.a, { top: 0, height: 2 * L, clamped: false });
 });
 
 test("the last comment is never cut", () => {
@@ -75,7 +94,7 @@ test("estimateHeight grows with the text", () => {
 /* ---------------------------- entries ---------------------------- */
 
 import {
-	annotationParts, buildEntries, flattenOutline, lastListed, lastOnPage, pageStartSlot, sortIndexAfter, sortIndexOf,
+	annotationParts, buildEntries, flattenOutline, foldEntries, lastListed, lastOnPage, pageStartSlot, sortIndexAfter, sortIndexOf,
 	usedColors,
 } from "../../src/evo/strip-layout.mjs";
 
@@ -296,4 +315,19 @@ test("a snapshot's outline: headings placed by a selector are kept", () => {
 		headings: [{ id: "h2", sortIndex: "0000200" }, { id: "h1", sortIndex: "0000100" }],
 	});
 	assert.deepEqual(ids(entries), ["h1", "b", "h2", "a"]);
+});
+
+test("headings fold: a collapsed one hides what follows up to the next heading of its depth or above", () => {
+	const h = (id, depth) => ({ kind: "heading", id, heading: { depth } });
+	const a = id => ({ kind: "annotation", id });
+	const entries = [h("1", 0), a("x"), h("1.1", 1), a("y"), h("1.1.1", 2), a("z"), h("2", 0), a("w"), h("3", 0), h("4", 0), a("v")];
+	const ids = list => list.map(e => e.id);
+	assert.deepEqual(ids(foldEntries(entries, new Set())), ids(entries));
+	assert.deepEqual(ids(foldEntries(entries, new Set(["1"]))), ["1", "2", "w", "3", "4", "v"]);
+	assert.deepEqual(ids(foldEntries(entries, new Set(["1.1"]))), ["1", "x", "1.1", "2", "w", "3", "4", "v"]);
+	assert.deepEqual(ids(foldEntries(entries, new Set(["1.1.1", "2"]))), ["1", "x", "1.1", "y", "1.1.1", "2", "3", "4", "v"]);
+	const marks = Object.fromEntries(foldEntries(entries, new Set(["1"])).filter(e => e.kind === "heading").map(e => [e.id, [e.hasContent, e.folded]]));
+	assert.deepEqual(marks, { 1: [true, true], 2: [true, false], 3: [false, false], 4: [true, false] });
+	// A heading with nothing under it cannot be folded (and hides nothing).
+	assert.deepEqual(ids(foldEntries(entries, new Set(["3"]))), ids(entries));
 });

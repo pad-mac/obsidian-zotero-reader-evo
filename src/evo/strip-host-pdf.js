@@ -157,9 +157,10 @@ export class PdfStripHost extends StripHost {
 		this.win.dispatchEvent(new this.win.Event("resize"));
 	}
 
-	_applyWidth(px) {
+	_applyWidth(px, live = false) {
 		this.doc.documentElement.style.setProperty("--zf-evo-strip-width", px + "px");
-		if (this._visible) this.win.dispatchEvent(new this.win.Event("resize"));
+		// While dragged, pdf.js is not asked to fit the pages each time.
+		if (this._visible && !live) this.win.dispatchEvent(new this.win.Event("resize"));
 	}
 
 	_applyMode() {
