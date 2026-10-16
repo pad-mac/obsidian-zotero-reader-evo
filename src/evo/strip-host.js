@@ -32,6 +32,12 @@ export const STRIP_DOC_CLASS = "zf-evo-strip-doc";
 /** Added on the root of the head's document. */
 export const STRIP_HEAD_CLASS = "zf-evo-strip-head";
 
+/** On the body of both documents while the pointer is over the strip: the head's buttons show. */
+export const HOVER_CLASS = "zf-evo-hover";
+
+/** How long the buttons stay after the pointer left (it may be crossing from head to strip). */
+const HOVER_LINGER = 250;
+
 function isTextBox(target) {
 	return !!target?.closest?.("textarea, input, [contenteditable=''], [contenteditable='true'], .cm-content");
 }
@@ -240,8 +246,77 @@ export class StripHost {
 			this.win.addEventListener(type, this._onPointerEnd, true);
 		}
 
+		this._trackHover();
 		this._applyMode();
 	}
+
+	/**
+	 * The head's buttons and filters show only while the pointer is over
+	 * the strip, head or comments (HOVER_CLASS). Each is a document of its
+	 * own, so both are watched; a short linger covers the crossing.
+	 */
+	_trackHover() {
+		this._hovered = false;
+		this._hoverTimer = null;
+		const apply = (on) => {
+			if (on === this._hovered) return;
+			this._hovered = on;
+			// On the body: the root's classes are the reader document's (followTheme).
+			for (const doc of [this.headDoc, this.stripDoc]) {
+				doc.body?.classList.toggle(HOVER_CLASS, on);
+			}
+		};
+		const enter = () => {
+			if (this._hoverTimer !== null) {
+				this.win.clearTimeout(this._hoverTimer);
+				this._hoverTimer = null;
+			}
+			apply(true);
+		};
+		const leave = () => {
+			if (this._hoverTimer !== null) this.win.clearTimeout(this._hoverTimer);
+			this._hoverTimer = this.win.setTimeout(() => {
+				this._hoverTimer = null;
+				apply(false);
+			}, HOVER_LINGER);
+		};
+		for (const doc of [this.headDoc, this.stripDoc]) {
+			const root = doc.documentElement;
+			root.addEventListener("pointerenter", enter);
+			root.addEventListener("pointerleave", leave);
+			// An enter missed (the strip appeared under the pointer).
+			doc.addEventListener("pointermove", () => {
+				if (!this._hovered || this._hoverTimer !== null) enter();
+			}, { passive: true });
+		}
+	}
+
+	/**
+	 * A point in one of the strip's documents (`frame`: its iframe), in the
+	 * reader's document: through the frames it stands in.
+	 */
+	toTopPoint(frame, clientX, clientY) {
+		let x = clientX;
+		let y = clientY;
+		let el = frame;
+		while (el) {
+			const rect = el.getBoundingClientRect();
+			x += rect.left;
+			y += rect.top;
+			const win = el.ownerDocument.defaultView;
+			if (!win || win === window) break;
+			el = win.frameElement;
+		}
+		return { x, y };
+	}
+
+	/**
+	 * Anchored, with no comment in view: the page labels of the nearest
+	 * comment above and below (null: none that way), for the arrows. Only
+	 * where entries can be anchored.
+	 */
+	// eslint-disable-next-line no-unused-vars
+	setArrows(up, down) {}
 
 	/**
 	 * Call `run` once no mouse button is held on the document: at once, or
@@ -415,6 +490,11 @@ export class StripHost {
 		return 0;
 	}
 
+	/** The top of what is seen of the strip, under its head (anchored only). */
+	get viewTop() {
+		return 0;
+	}
+
 	get contentHeight() {
 		return 0;
 	}
@@ -527,6 +607,7 @@ export class StripHost {
 			// The view's window is gone already.
 		}
 		this._headObserver.disconnect();
+		if (this._hoverTimer !== null) this.win.clearTimeout(this._hoverTimer);
 		unfollowTheme(this.stripDoc);
 		unfollowTheme(this.headDoc);
 		this.column.remove();

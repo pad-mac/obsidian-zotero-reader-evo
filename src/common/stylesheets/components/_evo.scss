@@ -195,12 +195,28 @@ html.zf-evo-strip-doc {
 		}
 	}
 
+	// The buttons (the Obsidian view's, while its header is hidden; then
+	// highlights and "+") and the colour filters, which move to a line of
+	// their own when the strip is narrow. Shown only while the pointer is
+	// over the strip (strip-host.js); hidden, they keep their room.
 	.zf-evo-head-tools {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
-		gap: 2px;
-		min-height: 28px;
+		gap: 1px;
+		min-height: 26px;
 		padding: 2px 8px 2px 6px;
+		visibility: hidden;
+	}
+
+	body.zf-evo-hover .zf-evo-head-tools,
+	.zf-evo-head-tools:focus-within {
+		visibility: visible;
+	}
+
+	.zf-evo-tool-gap {
+		flex: none;
+		width: 6px;
 	}
 
 	.zf-evo-tool {
@@ -208,11 +224,22 @@ html.zf-evo-strip-doc {
 		flex: none;
 		align-items: center;
 		justify-content: center;
-		width: 24px;
-		height: 24px;
+		width: 22px;
+		height: 22px;
+		padding: 0;
+		border: 0;
 		border-radius: 4px;
+		background: none;
+		box-shadow: none;
 		color: var(--text-muted, #666);
 		cursor: pointer;
+
+		// The same size and weight for Obsidian's icons and the strip's own.
+		svg {
+			width: 15px;
+			height: 15px;
+			stroke-width: var(--icon-stroke, 1.75px);
+		}
 
 		&:hover {
 			background-color: var(--background-modifier-hover, rgba(128, 128, 128, 0.15));

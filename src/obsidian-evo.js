@@ -381,6 +381,20 @@ export function reportNoteStrip(reader, settings) {
 	}
 }
 
+/**
+ * A button of the Obsidian view, shown in the strip's head while the view's
+ * own header is hidden, was clicked: the plugin clicks the real one. `x`,
+ * `y`: where, in the reader's document (for a menu the button opens).
+ */
+export function reportNoteStripAction(id, x, y) {
+	try {
+		ObsidianBridge?.handleEvent?.({ type: "noteStripAction", id, x, y });
+	}
+	catch (e) {
+		console.warn("[ZotFlow Evo] Could not pass on a note strip button:", e);
+	}
+}
+
 let stripShowsNotes = false;
 
 /**

@@ -98,6 +98,31 @@ html.${ANCHORED_CLASS}.zf-evo-strip-timeline #${FRAME_ID} {
 	animation: zf-evo-follow linear both;
 	animation-timeline: --zf-evo-scroll;
 }
+/* Anchored, with no comment in view: where the nearest ones are. Shown
+   over the strip, not part of it; they take no clicks (this document is
+   the PDF view's). */
+#${COLUMN_ID} .zf-evo-arrow {
+	position: absolute;
+	left: 0;
+	right: 0;
+	z-index: 1;
+	display: none;
+	justify-content: center;
+	align-items: center;
+	gap: 3px;
+	pointer-events: none;
+	color: var(--text-faint, rgba(128, 128, 128, 0.85));
+	font-family: var(--font-interface, system-ui, sans-serif);
+	font-size: 11px;
+	line-height: 14px;
+	font-variant-numeric: tabular-nums;
+	font-feature-settings: "tnum";
+	opacity: 0.8;
+}
+#${COLUMN_ID} .zf-evo-arrow.is-shown { display: flex; }
+#${COLUMN_ID} .zf-evo-arrow.is-up { top: 6px; }
+#${COLUMN_ID} .zf-evo-arrow.is-down { bottom: 8px; }
+#${COLUMN_ID} .zf-evo-arrow svg { width: 12px; height: 12px; }
 @keyframes zf-evo-follow {
 	from { transform: translateY(0); }
 	to { transform: translateY(calc(-1 * var(--zf-evo-max-scroll, 0px))); }
@@ -139,6 +164,17 @@ export class PdfStripHost extends StripHost {
 		this.clip.addEventListener("scroll", () => {
 			if (this.clip.scrollTop || this.clip.scrollLeft) this.clip.scrollTo(0, 0);
 		});
+
+		// The arrows towards comments out of view (setArrows()).
+		this._arrows = {};
+		for (const [dir, path] of [["up", "m18 15-6-6-6 6"], ["down", "m6 9 6 6 6-6"]]) {
+			const arrow = this.doc.createElement("div");
+			arrow.className = `zf-evo-arrow is-${dir}`;
+			arrow.setAttribute("aria-hidden", "true");
+			arrow.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${path}"/></svg><span></span>`;
+			this.clip.appendChild(arrow);
+			this._arrows[dir] = arrow;
+		}
 
 		// Zoom, page sizes arriving, the pane being resized: all change the
 		// size of the scrolling content or of the area it scrolls in.
@@ -211,6 +247,24 @@ export class PdfStripHost extends StripHost {
 
 	get scrollTop() {
 		return this.container.scrollTop;
+	}
+
+	/** The top of what is seen of the strip, under its head, in strip pixels. */
+	get viewTop() {
+		return this.container.scrollTop + (this._headHeight || 0);
+	}
+
+	setArrows(up, down) {
+		for (const [dir, label] of [["up", up], ["down", down]]) {
+			const arrow = this._arrows?.[dir];
+			if (!arrow) continue;
+			const shown = label !== null && label !== undefined;
+			arrow.classList.toggle("is-shown", shown && !this._collapsed);
+			const text = shown ? String(label) : "";
+			const span = arrow.querySelector("span");
+			if (span.textContent !== text) span.textContent = text;
+			arrow.title = shown ? `Next comment: page ${text}` : "";
+		}
 	}
 
 	get clientHeight() {

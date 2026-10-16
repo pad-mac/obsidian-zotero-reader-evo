@@ -331,3 +331,34 @@ test("headings fold: a collapsed one hides what follows up to the next heading o
 	// A heading with nothing under it cannot be folded (and hides nothing).
 	assert.deepEqual(ids(foldEntries(entries, new Set(["3"]))), ids(entries));
 });
+
+import { arrowTargets, titleRuns } from "../../src/evo/strip-layout.mjs";
+
+test("arrows: nothing in view gives the nearest comment above and below", () => {
+	const entry = (id, pageLabel) => ({ kind: "annotation", id, natural: L, annotation: { id, pageLabel } });
+	const entries = [entry("a", "3"), entry("b", "4"), { kind: "heading", id: "h" }, entry("c", "9"), entry("d", "10")];
+	const placed = new Map([["a", { top: 100, height: L }], ["b", { top: 300, height: 2 * L }], ["h", { top: 900, height: L }], ["c", { top: 2000, height: L }], ["d", { top: 2500, height: L }]]);
+	const t = arrowTargets(entries, placed, 1000, 1800);
+	assert.equal(t.up.id, "b");
+	assert.equal(t.down.id, "c");
+	assert.equal(arrowTargets(entries, placed, 250, 900), null, "one in view: no arrows");
+	assert.equal(arrowTargets(entries, placed, 310, 320), null, "partly in view counts");
+	const top = arrowTargets(entries, placed, 0, 50);
+	assert.equal(top.up, null);
+	assert.equal(top.down.id, "a");
+	const end = arrowTargets(entries, placed, 3000, 3500);
+	assert.equal(end.up.id, "d");
+	assert.equal(end.down, null);
+	assert.deepEqual(arrowTargets([{ kind: "annotation", id: "x", annotation: { _draft: true } }], new Map([["x", { top: 5000, height: L }]]), 0, 10), { up: null, down: null }, "a draft is no target");
+});
+
+test("titles: <i> and <em> italic, other markup left out", () => {
+	assert.deepEqual(titleRuns("Die <i>Ordnung</i> der <b>Dinge</b>"), [
+		{ text: "Die ", italic: false },
+		{ text: "Ordnung", italic: true },
+		{ text: " der Dinge", italic: false },
+	]);
+	assert.deepEqual(titleRuns("a < b"), [{ text: "a < b", italic: false }]);
+	assert.deepEqual(titleRuns(""), []);
+	assert.deepEqual(titleRuns(undefined), []);
+});

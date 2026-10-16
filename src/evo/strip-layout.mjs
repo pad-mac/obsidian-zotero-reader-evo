@@ -348,3 +348,77 @@ export function usedColors(annotations, palette) {
 	const ordered = palette.map(color => color.toLowerCase()).filter(color => used.delete(color));
 	return ordered.concat([...used]);
 }
+
+/**
+ * Anchored, with no comment in view: the nearest listed annotation above
+ * the view and the nearest below it, for the arrows at the top and the
+ * bottom of the strip. `null` when one is in view (no arrows then).
+ *
+ * @param {object[]} entries The anchored entries (with `natural`).
+ * @param {Map<string, { top: number, height: number }>} placed From layoutCards().
+ * @param {number} top Top of the view, in strip pixels.
+ * @param {number} bottom Bottom of the view.
+ * @returns {{ up: object | null, down: object | null } | null} Entries.
+ */
+export function arrowTargets(entries, placed, top, bottom) {
+	let up = null;
+	let down = null;
+	let upEnd = -Infinity;
+	let downTop = Infinity;
+	for (const entry of entries) {
+		if (entry.kind !== "annotation" || entry.annotation?._draft) continue;
+		const place = placed.get(entry.id);
+		if (!place) continue;
+		const end = place.top + Math.max(place.height, entry.natural || 0);
+		if (end <= top) {
+			if (end > upEnd) {
+				upEnd = end;
+				up = entry;
+			}
+		}
+		else if (place.top >= bottom) {
+			if (place.top < downTop) {
+				downTop = place.top;
+				down = entry;
+			}
+		}
+		else {
+			return null;
+		}
+	}
+	return { up, down };
+}
+
+/**
+ * A title as Zotero stores it, in runs: `<i>`/`<em>` as italics, any other
+ * markup left out. (The plugin's `titleRuns()` in evo-library-model.ts.)
+ *
+ * @param {string} raw
+ * @returns {{ text: string, italic: boolean }[]}
+ */
+export function titleRuns(raw) {
+	const text = String(raw || "");
+	const runs = [];
+	let depth = 0;
+	let at = 0;
+	const push = (part) => {
+		if (!part) return;
+		const italic = depth > 0;
+		const last = runs[runs.length - 1];
+		if (last && last.italic === italic) last.text += part;
+		else runs.push({ text: part, italic });
+	};
+	const tag = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
+	let match;
+	while ((match = tag.exec(text))) {
+		push(text.slice(at, match.index));
+		at = match.index + match[0].length;
+		const name = match[1].toLowerCase();
+		if (name === "i" || name === "em") {
+			if (match[0].startsWith("</")) depth = Math.max(0, depth - 1);
+			else depth++;
+		}
+	}
+	push(text.slice(at));
+	return runs;
+}

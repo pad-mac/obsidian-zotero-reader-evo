@@ -27,11 +27,12 @@ import { createPortal } from "react-dom";
 import cx from "classnames";
 import { ObsidianBridge } from "../obsidian-adapter";
 import { ANNOTATION_COLORS } from "../common/defines";
-import { NOTE_STRIP_STATE, applyNoteStrip, hasNoteStrip, reportNoteStrip } from "../obsidian-evo";
+import { NOTE_STRIP_STATE, applyNoteStrip, hasNoteStrip, reportNoteStrip, reportNoteStripAction } from "../obsidian-evo";
 import { PdfStripHost } from "./strip-host-pdf";
 import { DomStripHost } from "./strip-host-dom";
 import {
-	buildEntries, estimateHeight, flattenOutline, foldEntries, layoutCards, sortIndexAfter, usedColors, LINE_HEIGHT,
+	arrowTargets, buildEntries, estimateHeight, flattenOutline, foldEntries, layoutCards, sortIndexAfter, titleRuns,
+	usedColors, LINE_HEIGHT,
 } from "./strip-layout.mjs";
 
 export { hasNoteStrip };
@@ -567,30 +568,61 @@ function HeadBanner({ banner }) {
 	return (
 		<>
 			{(authors || year) && <Byline authors={authors} year={year}/>}
-			{title && <div className="zf-evo-head-title">{title}</div>}
+			{title && (
+				<div className="zf-evo-head-title">
+					{titleRuns(title).map((run, i) => (run.italic ? <i key={i}>{run.text}</i> : <React.Fragment key={i}>{run.text}</React.Fragment>))}
+				</div>
+			)}
 		</>
 	);
 }
 
-function IconHighlights() {
+/**
+ * Lucide's highlighter, as Obsidian draws its icons. On: in the accent
+ * colour, with a stroke of ink under it; off: muted and struck through.
+ */
+function IconHighlights({ on }) {
 	return (
-		<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-			<rect x="1.5" y="3" width="13" height="4" rx="1" fill="currentColor" opacity="0.35"/>
-			<rect x="1.5" y="9" width="9" height="4" rx="1" fill="currentColor" opacity="0.35"/>
-			<path d="M3 5h10M3 11h6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" fill="none"/>
+		<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+			<path d="m9 11-6 6v3h9l3-3"/>
+			<path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>
+			{on
+				? <path d="M14 22h7" strokeWidth="3" opacity="0.55"/>
+				: <path d="M3 3l18 18"/>}
 		</svg>
 	);
 }
 
+/** Lucide's plus. */
 function IconPlus() {
 	return (
-		<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-			<path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" fill="none"/>
+		<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+			<path d="M5 12h14"/>
+			<path d="M12 5v14"/>
 		</svg>
 	);
 }
 
-function StripHead({ annotations, settings, colors, readOnly, paged, onToggleColor, onToggleHighlights, onNewNote }) {
+/**
+ * A button of the Obsidian view, while the view's header is hidden: its
+ * icon as Obsidian drew it, a click passed on to the real button.
+ */
+function ViewAction({ action, onAction }) {
+	return (
+		<button
+			type="button"
+			className="zf-evo-tool is-view-action"
+			title={action.title}
+			aria-label={action.title}
+			data-action={action.id}
+			onClick={event => onAction(action.id, event)}
+			// Obsidian's own icon markup (the plugin sends what it drew).
+			dangerouslySetInnerHTML={{ __html: action.icon || "" }}
+		/>
+	);
+}
+
+function StripHead({ annotations, settings, colors, readOnly, paged, onToggleColor, onToggleHighlights, onNewNote, onAction }) {
 	const swatches = useMemo(() => {
 		const used = usedColors(annotations, PALETTE);
 		// A chosen colour stays on offer after its last annotation is gone,
@@ -605,6 +637,10 @@ function StripHead({ annotations, settings, colors, readOnly, paged, onToggleCol
 		<div className="zf-evo-head">
 			<HeadBanner banner={settings.banner}/>
 			<div className="zf-evo-head-tools">
+				{(settings.actions || []).map(action => (
+					<ViewAction key={action.id} action={action} onAction={onAction}/>
+				))}
+				{settings.actions?.length > 0 && <span className="zf-evo-tool-gap" aria-hidden="true"/>}
 				<button
 					type="button"
 					className={cx("zf-evo-tool", { "is-on": showHighlights })}
@@ -613,7 +649,7 @@ function StripHead({ annotations, settings, colors, readOnly, paged, onToggleCol
 					data-tool="highlights"
 					onClick={onToggleHighlights}
 				>
-					<IconHighlights/>
+					<IconHighlights on={showHighlights}/>
 				</button>
 				{!readOnly && (
 					<button
@@ -1015,7 +1051,9 @@ function Strip({
 			showHighlights,
 			colors,
 		});
-		if (collapsed) return { entries: foldEntries(entries, folded), placed: null };
+		// Whether anything is listed at all, folded away or not.
+		const any = entries.some(entry => entry.kind === "annotation");
+		if (collapsed) return { entries: foldEntries(entries, folded), placed: null, any };
 		// Anchored: every entry on its line, beside its place on the page.
 		const items = [];
 		for (const entry of entries) {
@@ -1036,7 +1074,7 @@ function Strip({
 			items.push(entry);
 		}
 		items.sort((a, b) => a.anchor - b.anchor || (a.sortIndex < b.sortIndex ? -1 : a.sortIndex > b.sortIndex ? 1 : 0));
-		return { entries: items, placed: layoutCards(items) };
+		return { entries: items, placed: layoutCards(items), any };
 		// `tick` stands for what the host measures (page positions, zoom, page
 		// texts) and for the heights in `heights`, none of which React sees.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1086,7 +1124,32 @@ function Strip({
 		onFold(ids, !entry.folded);
 	}, [model, onFold]);
 
-	const nothing = collapsed && !visible.some(entry => entry.kind === "annotation");
+	// Folded headings hide their comments; that is not "no comments".
+	const nothing = collapsed && !model.any;
+
+	// Anchored, with no comment in view: arrows at the top and the bottom
+	// with the page of the nearest comment that way (strip-host-pdf.js).
+	useEffect(() => {
+		if (collapsed) {
+			host.setArrows(null, null);
+			return undefined;
+		}
+		const update = () => {
+			const targets = arrowTargets(model.entries, model.placed, host.viewTop, host.scrollTop + host.clientHeight);
+			host.setArrows(
+				targets?.up ? targets.up.annotation.pageLabel ?? "" : null,
+				targets?.down ? targets.down.annotation.pageLabel ?? "" : null,
+			);
+		};
+		update();
+		const off = host.on((event) => {
+			if (event.type === "scroll" || event.type === "geometry") update();
+		});
+		return () => {
+			off();
+			host.setArrows(null, null);
+		};
+	}, [host, model, collapsed]);
 
 	return (
 		<div
@@ -1170,6 +1233,11 @@ function StripRoot({ host, state, settings, paged, ...handlers }) {
 
 	const newNote = useCallback(() => actions.current.newNote?.(), []);
 
+	const viewAction = useCallback((id, event) => {
+		const { x, y } = host.toTopPoint(host.head, event.clientX, event.clientY);
+		reportNoteStripAction(id, x, y);
+	}, [host]);
+
 	return (
 		<>
 			{createPortal(
@@ -1182,6 +1250,7 @@ function StripRoot({ host, state, settings, paged, ...handlers }) {
 					onToggleColor={toggleColor}
 					onToggleHighlights={toggleHighlights}
 					onNewNote={newNote}
+					onAction={viewAction}
 				/>,
 				host.headMount
 			)}
