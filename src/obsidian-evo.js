@@ -10,6 +10,9 @@
 import { ObsidianBridge } from "./obsidian-adapter";
 
 const RESOLVED_STYLE_ID = "zf-evo-resolved-vars";
+
+/** On the reader document's body (and the strip's) when the strip is all that is shown. */
+export const STRIP_ONLY_CLASS = "zf-evo-strip-only";
 const TOOLBAR_HIDDEN_CLASS = "zf-evo-toolbar-hidden";
 
 /**
@@ -352,6 +355,9 @@ export function applyNoteStrip(reader, settings) {
 	const current = reader._state?.[NOTE_STRIP_STATE] || {};
 	const next = { ...current, ...settings };
 	reader._updateState({ [NOTE_STRIP_STATE]: next });
+	// The strip alone, in a tab of its own (the plugin's "annotation strip"):
+	// the document stays loaded but out of sight (`_evo.scss`).
+	document.body?.classList.toggle(STRIP_ONLY_CLASS, !!next.stripOnly);
 	if ("pdfFilter" in settings) applyPdfFilter(reader);
 	const visible = !!next.visible && reader._type === "pdf";
 	if (visible !== stripShowsNotes) {
@@ -379,6 +385,19 @@ export function reportNoteStrip(reader, settings) {
 	}
 	catch (e) {
 		console.warn("[ZotFlow Evo] Could not report a note strip setting:", e);
+	}
+}
+
+/**
+ * The strip alone (strip-only): an entry or heading is to be opened in a
+ * reader of its own, at `location` (`{ annotationID }`, or a heading's place).
+ */
+export function reportNoteStripOpen(location) {
+	try {
+		ObsidianBridge?.handleEvent?.({ type: "noteStripOpen", location });
+	}
+	catch (e) {
+		console.warn("[ZotFlow Evo] Could not ask to open the place:", e);
 	}
 }
 

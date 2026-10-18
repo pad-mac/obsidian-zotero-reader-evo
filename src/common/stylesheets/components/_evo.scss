@@ -31,6 +31,40 @@ body.zf-evo-toolbar-hidden {
 	}
 }
 
+// The strip alone, in a tab of its own (the plugin's annotation strip;
+// `stripOnly` in the strip settings). The document stays loaded but is not
+// shown: beside a PDF the strip is inside the PDF view, which is made to
+// fill the reader (the pages are hidden there, strip-host-pdf.js); beside a
+// snapshot the column here takes the whole width.
+body.zf-evo-strip-only {
+	.toolbar,
+	#sidebarContainer,
+	.sidebar-resizer,
+	#zf-sidebar-backdrop {
+		display: none !important;
+	}
+
+	#split-view,
+	.split-view {
+		top: 0;
+		inset-inline-start: 0;
+	}
+
+	&.zf-evo-side-strip {
+		#split-view,
+		.split-view {
+			visibility: hidden;
+		}
+	}
+
+	#zf-evo-strip-column {
+		top: 0;
+		inset-inline-start: 0;
+		width: auto;
+		border-inline-start: 0;
+	}
+}
+
 // ---------------------------------------------------------------------
 // Note strip beside a snapshot (src/evo/strip-host-dom.js): a column in
 // this document at the far side, for which the views give up some width —
@@ -178,6 +212,11 @@ html.zf-evo-strip-doc {
 	}
 
 	// The edge towards the document: dragged to resize the strip.
+	// The strip alone: as wide as its tab, nothing to drag.
+	body.zf-evo-strip-only .zf-evo-resize {
+		display: none;
+	}
+
 	.zf-evo-resize {
 		position: fixed;
 		top: 0;
@@ -448,6 +487,18 @@ html.zf-evo-strip-doc {
 		white-space: nowrap;
 		user-select: none;
 		pointer-events: none;
+
+		// The strip alone: the page number opens the place in a reader.
+		&.is-link {
+			pointer-events: auto;
+			cursor: pointer;
+			transition: color 90ms ease-out;
+
+			&:hover {
+				color: var(--text-accent, #5b5bd6);
+				text-decoration: underline;
+			}
+		}
 	}
 
 	.zf-evo-row.is-first {

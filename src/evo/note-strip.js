@@ -29,7 +29,7 @@ import { ObsidianBridge } from "../obsidian-adapter";
 import { ANNOTATION_COLORS } from "../common/defines";
 import {
 	NEUTRAL_PDF_FILTER, NOTE_STRIP_STATE, applyNoteStrip, applyPdfFilter, hasNoteStrip, isNeutralPdfFilter, pdfFilterOf,
-	reportNoteStrip, reportNoteStripAction,
+	reportNoteStrip, reportNoteStripAction, reportNoteStripOpen,
 } from "../obsidian-evo";
 import { PdfStripHost } from "./strip-host-pdf";
 import { DomStripHost } from "./strip-host-dom";
@@ -317,7 +317,7 @@ function Marked({ annotation }) {
 
 function Card({
 	entry, place, active, list, focusToken, readOnly, host,
-	onActivate, onDeactivate, onChange, onMeasure, onColor, onMenu, onLeave,
+	onActivate, onDeactivate, onChange, onMeasure, onColor, onMenu, onLeave, onOpen,
 }) {
 	const { annotation, parts } = entry;
 	const rootRef = useRef();
@@ -424,7 +424,18 @@ function Card({
 			onBlur={handleBlur}
 			onContextMenu={handleContextMenu}
 		>
-			<span className="zf-evo-page" aria-hidden="true" ref={pageRef}>{annotation.pageLabel || ""}</span>
+			<span
+				className={cx("zf-evo-page", { "is-link": !!onOpen && !annotation._draft })}
+				aria-hidden="true"
+				ref={pageRef}
+				title={onOpen ? "Open at this place" : undefined}
+				onClick={onOpen && !annotation._draft
+					? (event) => {
+						event.stopPropagation();
+						onOpen(annotation);
+					}
+					: undefined}
+			>{annotation.pageLabel || ""}</span>
 			<div className="zf-evo-card-clip">
 				<div className="zf-evo-card-inner" ref={innerRef}>
 					{parts.highlight && (
@@ -715,7 +726,7 @@ function StripHead({ host, annotations, settings, colors, paged, onToggleColor, 
 				>
 					<IconHighlights on={showHighlights}/>
 				</button>
-				{paged && (
+				{paged && !settings.stripOnly && (
 					<button
 						type="button"
 						className={cx("zf-evo-tool", { "is-on": filtered || filterOpen })}
@@ -746,7 +757,7 @@ function StripHead({ host, annotations, settings, colors, paged, onToggleColor, 
 					))}
 				</span>
 			</div>
-			{paged && filterOpen && <FilterPanel filter={settings.pdfFilter} onChange={onFilter}/>}
+			{paged && !settings.stripOnly && filterOpen && <FilterPanel filter={settings.pdfFilter} onChange={onFilter}/>}
 		</div>
 	);
 }
@@ -764,6 +775,8 @@ function Strip({
 	const collapsed = !!settings.collapsed || !host.canAnchor;
 	const showHighlights = !!settings.highlights;
 	const readOnly = !!state.readOnly;
+	// The strip alone, in a tab of its own: no page beside it to go to.
+	const stripOnly = !!settings.stripOnly;
 	const [tick, bump] = useReducer(n => n + 1, 0);
 	const [scrollSlot, setScrollSlot] = useState(0);
 	const [activeId, setActiveId] = useState(null);
@@ -958,13 +971,22 @@ function Strip({
 
 	const handleActivate = useCallback((annotation, event) => {
 		if (annotation._draft) return;
+		// The strip alone: Ctrl/Cmd+click opens the place in a reader.
+		if (stripOnly && (event?.ctrlKey || event?.metaKey)) {
+			reportNoteStripOpen({ annotationID: annotation.id });
+			return;
+		}
 		if (draftRef.current) endDraft();
 		// Anchored, the annotation is already beside its entry; as a list the
 		// page is brought to it.
 		onSelectAnnotations([annotation.id], !collapsed, event);
 		if (readOnly || annotation.readOnly) return;
 		activate(annotation.id);
-	}, [activate, collapsed, endDraft, onSelectAnnotations, readOnly]);
+	}, [activate, collapsed, endDraft, onSelectAnnotations, readOnly, stripOnly]);
+
+	const handleOpen = useCallback((annotation) => {
+		reportNoteStripOpen({ annotationID: annotation.id });
+	}, []);
 
 	const handleMenu = useCallback((annotation, event) => {
 		const { x, y } = host.toReaderPoint(event.clientX, event.clientY);
@@ -974,8 +996,9 @@ function Strip({
 	const handleLeave = useCallback(() => host.focusView(), [host]);
 
 	const handleHeading = useCallback((heading) => {
-		onNavigate(heading.location);
-	}, [onNavigate]);
+		if (stripOnly) reportNoteStripOpen(heading.location);
+		else onNavigate(heading.location);
+	}, [onNavigate, stripOnly]);
 
 	const startDraft = useCallback((spot) => {
 		if (!spot || readOnly) return;
@@ -1178,7 +1201,8 @@ function Strip({
 		}
 		const entry = above && model.entries.find(x => x.id === above);
 		if (entry) startNoteUnder(entry);
-		else startNoteHere();
+		// "What is being read" is nowhere in sight when the strip is alone.
+		else if (!stripOnly) startNoteHere();
 	}
 
 	entriesRef.current = model.entries;
@@ -1252,13 +1276,14 @@ function Strip({
 						onColor={handleColor}
 						onMenu={handleMenu}
 						onLeave={handleLeave}
+						onOpen={stripOnly ? handleOpen : undefined}
 					/>
 				)))}
 			{nothing && (
 				<div className="zf-evo-empty">
 					{colors.size
 						? "Nothing in this colour."
-						: readOnly
+						: readOnly || stripOnly
 							? "No comments."
 							: `No comments yet. Click here to write a note${paged ? " for this page" : ""}.`}
 				</div>
@@ -1397,6 +1422,10 @@ export default function EvoNoteStrip(props) {
 		? window._reader?._primaryView || null
 		: null;
 	const host = useStripHost(view, props.type);
+	const stripOnly = !!settings?.stripOnly;
+	useEffect(() => {
+		host?.setStripOnly(stripOnly);
+	}, [host, stripOnly]);
 	if (!host || !settings?.visible) return null;
 	return (
 		<StripRoot

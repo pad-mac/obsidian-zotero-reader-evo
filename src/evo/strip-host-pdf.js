@@ -123,6 +123,9 @@ html.${ANCHORED_CLASS}.zf-evo-strip-timeline #${FRAME_ID} {
 #${COLUMN_ID} .zf-evo-arrow.is-up { top: 6px; }
 #${COLUMN_ID} .zf-evo-arrow.is-down { bottom: 8px; }
 #${COLUMN_ID} .zf-evo-arrow svg { width: 12px; height: 12px; }
+/* The strip alone (strip-only): the pages out of sight, the strip across. */
+html.zf-evo-strip-only #viewerContainer { visibility: hidden; }
+html.zf-evo-strip-only #${COLUMN_ID} { left: 0; width: auto; border-inline-start: 0; }
 @keyframes zf-evo-follow {
 	from { transform: translateY(0); }
 	to { transform: translateY(calc(-1 * var(--zf-evo-max-scroll, 0px))); }
@@ -197,6 +200,10 @@ export class PdfStripHost extends StripHost {
 		this.doc.documentElement.style.setProperty("--zf-evo-strip-width", px + "px");
 		// While dragged, pdf.js is not asked to fit the pages each time.
 		if (this._visible && !live) this.win.dispatchEvent(new this.win.Event("resize"));
+	}
+
+	_applyStripOnly(on) {
+		this.doc.documentElement.classList.toggle("zf-evo-strip-only", on);
 	}
 
 	_applyMode() {
@@ -537,7 +544,7 @@ export class PdfStripHost extends StripHost {
 		this.container.removeEventListener("scroll", this._onScroll);
 		const root = this.doc.documentElement;
 		const wasVisible = root.classList.contains(ON_CLASS);
-		root.classList.remove(ON_CLASS, ANCHORED_CLASS, "zf-evo-strip-timeline");
+		root.classList.remove(ON_CLASS, ANCHORED_CLASS, "zf-evo-strip-timeline", "zf-evo-strip-only");
 		super.destroy();
 		if (wasVisible) {
 			try {

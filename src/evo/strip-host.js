@@ -20,7 +20,7 @@
  * tree (note-strip.js).
  */
 
-import { followTheme, unfollowTheme } from "../obsidian-evo";
+import { STRIP_ONLY_CLASS, followTheme, unfollowTheme } from "../obsidian-evo";
 
 export const COLUMN_ID = "zf-evo-strip-column";
 export const FRAME_ID = "zf-evo-strip-frame";
@@ -436,6 +436,28 @@ export class StripHost {
 		this._applyMode();
 		this._emit("geometry");
 	}
+
+	/**
+	 * The strip alone, the document out of sight (strip-only). Marked on the
+	 * strip's documents; a subclass marks its own document too.
+	 */
+	setStripOnly(on) {
+		on = !!on;
+		if (on === this._stripOnly) return;
+		this._stripOnly = on;
+		for (const doc of [this.headDoc, this.stripDoc]) {
+			doc?.body?.classList.toggle(STRIP_ONLY_CLASS, on);
+		}
+		this._applyStripOnly(on);
+		this._geometryChanged();
+	}
+
+	get stripOnly() {
+		return !!this._stripOnly;
+	}
+
+	// eslint-disable-next-line no-unused-vars
+	_applyStripOnly(on) {}
 
 	_applyMode() {
 		// On the body: the root's classes are the reader document's (followTheme).
