@@ -27,7 +27,10 @@ import { createPortal } from "react-dom";
 import cx from "classnames";
 import { ObsidianBridge } from "../obsidian-adapter";
 import { ANNOTATION_COLORS } from "../common/defines";
-import { NOTE_STRIP_STATE, applyNoteStrip, hasNoteStrip, reportNoteStrip, reportNoteStripAction } from "../obsidian-evo";
+import {
+	NEUTRAL_PDF_FILTER, NOTE_STRIP_STATE, applyNoteStrip, applyPdfFilter, hasNoteStrip, isNeutralPdfFilter, pdfFilterOf,
+	reportNoteStrip, reportNoteStripAction,
+} from "../obsidian-evo";
 import { PdfStripHost } from "./strip-host-pdf";
 import { DomStripHost } from "./strip-host-dom";
 import {
@@ -536,8 +539,11 @@ function Heading({ entry, place, list, onOpen, onFold }) {
  * The head: title line, buttons, colour filters
  * ------------------------------------------------------------------ */
 
-/** The authors on one line, fading out before the year when they do not fit. */
-function Byline({ authors, year }) {
+/**
+ * The authors on one line, fading out before the year when they do not fit.
+ * With `authorList`, each name opens that person's note in Obsidian.
+ */
+function Byline({ authors, authorList, year, onPerson }) {
 	const ref = useRef();
 	const [overflowing, setOverflowing] = useState(false);
 	useLayoutEffect(() => {
@@ -548,10 +554,19 @@ function Byline({ authors, year }) {
 		const observer = new el.ownerDocument.defaultView.ResizeObserver(check);
 		observer.observe(el);
 		return () => observer.disconnect();
-	}, [authors]);
+	}, [authors, authorList]);
 	return (
 		<div className="zf-evo-head-byline">
-			<span ref={ref} className={cx("zf-evo-head-authors", { "is-overflowing": overflowing })} title={authors}>{authors}</span>
+			<span ref={ref} className={cx("zf-evo-head-authors", { "is-overflowing": overflowing })} title={authors}>
+				{authorList?.length
+					? authorList.map((name, i) => (
+						<React.Fragment key={i}>
+							{i > 0 && ", "}
+							<span className="zf-evo-person" onClick={event => onPerson?.(name, event)}>{name}</span>
+						</React.Fragment>
+					))
+					: authors}
+			</span>
 			{year && <span className="zf-evo-head-year">{year}</span>}
 		</div>
 	);
@@ -559,28 +574,25 @@ function Byline({ authors, year }) {
 
 /**
  * The two lines above the strip: the authors (all of them) with the year at
- * the right end, then the full title. `banner` is `{ authors, year, title }`
- * or just a text (shown as the title).
+ * the right end, then the full title. `banner` is `{ authors, authorList,
+ * year, title }` or just a text (shown as the title). A right-click on them
+ * opens the plugin's menu (source note, library).
  */
-function HeadBanner({ banner }) {
+function HeadBanner({ banner, onPerson, onMenu }) {
 	if (!banner) return null;
-	const { authors = "", year = "", title = "" } = typeof banner === "string" ? { title: banner } : banner;
+	const { authors = "", authorList = null, year = "", title = "" } = typeof banner === "string" ? { title: banner } : banner;
 	return (
-		<>
-			{(authors || year) && <Byline authors={authors} year={year}/>}
+		<div className="zf-evo-head-banner" onContextMenu={onMenu}>
+			{(authors || year) && <Byline authors={authors} authorList={authorList} year={year} onPerson={onPerson}/>}
 			{title && (
 				<div className="zf-evo-head-title">
 					{titleRuns(title).map((run, i) => (run.italic ? <i key={i}>{run.text}</i> : <React.Fragment key={i}>{run.text}</React.Fragment>))}
 				</div>
 			)}
-		</>
+		</div>
 	);
 }
 
-/**
- * Lucide's highlighter, as Obsidian draws its icons. On: in the accent
- * colour, with a stroke of ink under it; off: muted and struck through.
- */
 function IconHighlights({ on }) {
 	return (
 		<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -593,13 +605,51 @@ function IconHighlights({ on }) {
 	);
 }
 
-/** Lucide's plus. */
-function IconPlus() {
+/** Lucide's sliders-horizontal: the page filter. */
+function IconFilter() {
 	return (
 		<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-			<path d="M5 12h14"/>
-			<path d="M12 5v14"/>
+			<path d="M21 4h-7"/><path d="M10 4H3"/><path d="M21 12h-9"/><path d="M8 12H3"/><path d="M21 20h-5"/><path d="M12 20H3"/>
+			<path d="M14 2v4"/><path d="M8 10v4"/><path d="M16 18v4"/>
 		</svg>
+	);
+}
+
+const FILTER_SLIDERS = [
+	{ key: "whiteThreshold", label: "White threshold", min: 0, max: 0.5, step: 0.01, format: v => `${Math.round(v * 100)}%` },
+	{ key: "contrast", label: "Contrast", min: 0.5, max: 3, step: 0.05, format: v => v.toFixed(2) },
+	{ key: "saturation", label: "Saturation", min: 0, max: 2, step: 0.05, format: v => `${Math.round(v * 100)}%` },
+];
+
+/** The page filter's sliders, under the buttons. */
+function FilterPanel({ filter, onChange }) {
+	const f = pdfFilterOf(filter);
+	return (
+		<div className="zf-evo-filter-panel">
+			{FILTER_SLIDERS.map(slider => (
+				<label key={slider.key} className="zf-evo-slider">
+					<span className="zf-evo-slider-label">{slider.label}</span>
+					<input
+						type="range"
+						min={slider.min}
+						max={slider.max}
+						step={slider.step}
+						value={f[slider.key]}
+						onChange={event => onChange({ ...f, [slider.key]: Number(event.target.value) })}
+						onDoubleClick={() => onChange({ ...f, [slider.key]: NEUTRAL_PDF_FILTER[slider.key] })}
+					/>
+					<span className="zf-evo-slider-value">{slider.format(f[slider.key])}</span>
+				</label>
+			))}
+			<button
+				type="button"
+				className="zf-evo-filter-reset"
+				disabled={isNeutralPdfFilter(f)}
+				onClick={() => onChange({ ...NEUTRAL_PDF_FILTER })}
+			>
+				Reset
+			</button>
+		</div>
 	);
 }
 
@@ -622,7 +672,7 @@ function ViewAction({ action, onAction }) {
 	);
 }
 
-function StripHead({ annotations, settings, colors, readOnly, paged, onToggleColor, onToggleHighlights, onNewNote, onAction }) {
+function StripHead({ host, annotations, settings, colors, paged, onToggleColor, onToggleHighlights, onAction, onFilter }) {
 	const swatches = useMemo(() => {
 		const used = usedColors(annotations, PALETTE);
 		// A chosen colour stays on offer after its last annotation is gone,
@@ -633,9 +683,23 @@ function StripHead({ annotations, settings, colors, readOnly, paged, onToggleCol
 		return used;
 	}, [annotations, colors]);
 	const showHighlights = !!settings.highlights;
+	const [filterOpen, setFilterOpen] = useState(false);
+	const filtered = !isNeutralPdfFilter(settings.pdfFilter);
+	// The sliders close when the pointer leaves the strip.
+	useEffect(() => host.on((event) => {
+		if (event.type === "hover" && !event.on) setFilterOpen(false);
+	}), [host]);
+	const person = useCallback((name, event) => {
+		event.stopPropagation();
+		onAction("person:" + name, event);
+	}, [onAction]);
+	const menu = useCallback((event) => {
+		event.preventDefault();
+		onAction("title-menu", event);
+	}, [onAction]);
 	return (
 		<div className="zf-evo-head">
-			<HeadBanner banner={settings.banner}/>
+			<HeadBanner banner={settings.banner} onPerson={person} onMenu={menu}/>
 			<div className="zf-evo-head-tools">
 				{(settings.actions || []).map(action => (
 					<ViewAction key={action.id} action={action} onAction={onAction}/>
@@ -651,15 +715,17 @@ function StripHead({ annotations, settings, colors, readOnly, paged, onToggleCol
 				>
 					<IconHighlights on={showHighlights}/>
 				</button>
-				{!readOnly && (
+				{paged && (
 					<button
 						type="button"
-						className="zf-evo-tool"
-						title={paged ? "New note on this page" : "New note here"}
-						data-tool="new-note"
-						onClick={onNewNote}
+						className={cx("zf-evo-tool", { "is-on": filtered || filterOpen })}
+						title="Page filter: white threshold, contrast, saturation"
+						aria-pressed={filterOpen}
+						aria-expanded={filterOpen}
+						data-tool="page-filter"
+						onClick={() => setFilterOpen(open => !open)}
 					>
-						<IconPlus/>
+						<IconFilter/>
 					</button>
 				)}
 				<span className="zf-evo-filters" role="group" aria-label="Show only these colours">
@@ -680,6 +746,7 @@ function StripHead({ annotations, settings, colors, readOnly, paged, onToggleCol
 					))}
 				</span>
 			</div>
+			{paged && filterOpen && <FilterPanel filter={settings.pdfFilter} onChange={onFilter}/>}
 		</div>
 	);
 }
@@ -733,7 +800,7 @@ function Strip({
 			// Dragged wider or narrower: kept by the plugin, for every reader.
 			reportNoteStrip(reader, { width: event.width });
 		}
-		else setScrollSlot(Math.floor(host.scrollTop / SCROLL_STEP));
+		else if (event.type === "scroll") setScrollSlot(Math.floor(host.scrollTop / SCROLL_STEP));
 	}), [host, reader]);
 
 	const activate = useCallback((id) => {
@@ -1231,7 +1298,18 @@ function StripRoot({ host, state, settings, paged, ...handlers }) {
 		reportNoteStrip(window._reader, { highlights: !settings.highlights });
 	}, [settings.highlights]);
 
-	const newNote = useCallback(() => actions.current.newNote?.(), []);
+	// The page filter follows the sliders at once; the plugin keeps it (for
+	// every reader) once they rest.
+	const filterTimer = useRef(null);
+	const changeFilter = useCallback((filter) => {
+		const reader = window._reader;
+		applyNoteStrip(reader, { pdfFilter: filter });
+		if (filterTimer.current) clearTimeout(filterTimer.current);
+		filterTimer.current = setTimeout(() => {
+			filterTimer.current = null;
+			reportNoteStrip(reader, { pdfFilter: filter });
+		}, 300);
+	}, []);
 
 	const viewAction = useCallback((id, event) => {
 		const { x, y } = host.toTopPoint(host.head, event.clientX, event.clientY);
@@ -1242,15 +1320,15 @@ function StripRoot({ host, state, settings, paged, ...handlers }) {
 		<>
 			{createPortal(
 				<StripHead
+					host={host}
 					annotations={state.annotations}
 					settings={settings}
 					colors={colors}
-					readOnly={!!state.readOnly}
 					paged={paged}
 					onToggleColor={toggleColor}
 					onToggleHighlights={toggleHighlights}
-					onNewNote={newNote}
 					onAction={viewAction}
+					onFilter={changeFilter}
 				/>,
 				host.headMount
 			)}
@@ -1308,6 +1386,13 @@ function useStripHost(view, type) {
  */
 export default function EvoNoteStrip(props) {
 	const settings = props.state[NOTE_STRIP_STATE];
+	// The page filter is on the pages whether the strip is shown or not; a
+	// view (re)drawn gets it again (cheap when nothing changed).
+	const filterKey = JSON.stringify(settings?.pdfFilter ?? null);
+	const stats = props.state.primaryViewStats;
+	useEffect(() => {
+		if (props.type === "pdf") applyPdfFilter(window._reader);
+	}, [filterKey, stats, props.type]);
 	const view = hasNoteStrip(props.type) && settings?.visible
 		? window._reader?._primaryView || null
 		: null;

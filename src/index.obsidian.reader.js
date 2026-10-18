@@ -10,6 +10,7 @@ import {
 	applyResolvedObsidianVariables,
 	applyToolbarHidden,
 	refreshResolvedObsidianVariables,
+	startFind,
 	syncThemeFollowers,
 } from "./obsidian-evo";
 
@@ -465,7 +466,11 @@ export default class ZoteroReaderAdapter {
 
 	async navigate(location) {
 		if (this.reader) {
-			this.reader.navigate(location, { behavior: "smooth" });
+			// ZotFlow Evo: `evoFind` opens the find bar at a search (the
+			// plugin's full-text search); the rest is a place, as before.
+			const { evoFind, ...place } = location || {};
+			if (Object.keys(place).length) this.reader.navigate(place, { behavior: "smooth" });
+			if (evoFind) startFind(this.reader, evoFind);
 		}
 	}
 

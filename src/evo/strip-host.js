@@ -265,6 +265,7 @@ export class StripHost {
 			for (const doc of [this.headDoc, this.stripDoc]) {
 				doc.body?.classList.toggle(HOVER_CLASS, on);
 			}
+			this._emit("hover", { on });
 		};
 		const enter = () => {
 			if (this._hoverTimer !== null) {

@@ -352,6 +352,7 @@ export function applyNoteStrip(reader, settings) {
 	const current = reader._state?.[NOTE_STRIP_STATE] || {};
 	const next = { ...current, ...settings };
 	reader._updateState({ [NOTE_STRIP_STATE]: next });
+	if ("pdfFilter" in settings) applyPdfFilter(reader);
 	const visible = !!next.visible && reader._type === "pdf";
 	if (visible !== stripShowsNotes) {
 		stripShowsNotes = visible;
@@ -448,4 +449,128 @@ export function annotationsNewerHere(reader) {
 		if (now - time <= LOCAL_WRITE_GRACE_MS) ids.add(id);
 	}
 	return ids;
+}
+
+/* ------------------------------------------------------------------ *
+ * Colour filter over PDF pages (set in the note strip's head)
+ * ------------------------------------------------------------------ */
+
+const PDF_FILTER_ID = "zf-evo-pdf-filter";
+const PDF_FILTER_STYLE_ID = "zf-evo-pdf-filter-style";
+
+/** Neutral values: the pages as they are. */
+export const NEUTRAL_PDF_FILTER = { whiteThreshold: 0, contrast: 1, saturation: 1 };
+
+/** The filter's values within range (missing ones neutral). */
+export function pdfFilterOf(value) {
+	const clamp = (n, lo, hi, fallback) => (typeof n === "number" && Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : fallback);
+	return {
+		whiteThreshold: clamp(value?.whiteThreshold, 0, 0.5, 0),
+		contrast: clamp(value?.contrast, 0.5, 3, 1),
+		saturation: clamp(value?.saturation, 0, 2, 1),
+	};
+}
+
+export function isNeutralPdfFilter(filter) {
+	const f = pdfFilterOf(filter);
+	return f.whiteThreshold === 0 && f.contrast === 1 && f.saturation === 1;
+}
+
+/**
+ * The tone curve, as an feComponentTransfer table: everything within
+ * `whiteThreshold` of white becomes white (a white point), then a gamma of
+ * `contrast` — above 1 text and lines get darker, white and black stay.
+ * Like KOReader's white threshold and contrast.
+ */
+export function pdfToneTable(filter, steps = 64) {
+	const { whiteThreshold, contrast } = pdfFilterOf(filter);
+	const values = [];
+	for (let i = 0; i <= steps; i++) {
+		const x = i / steps;
+		const lifted = Math.min(1, x / (1 - whiteThreshold));
+		values.push(Math.pow(lifted, contrast).toFixed(4));
+	}
+	return values.join(" ");
+}
+
+/**
+ * Put the filter on the pages of one PDF view's document, or take it off
+ * (neutral). An SVG filter (saturation, then the tone curve) on each page's
+ * canvas; the text layer and annotations stay as they are.
+ */
+export function applyPdfFilterTo(doc, filter) {
+	if (!doc?.head || !doc.body) return;
+	const neutral = isNeutralPdfFilter(filter);
+	let style = doc.getElementById(PDF_FILTER_STYLE_ID);
+	let svg = doc.getElementById(PDF_FILTER_ID + "-svg");
+	if (neutral) {
+		style?.remove();
+		svg?.remove();
+		return;
+	}
+	const f = pdfFilterOf(filter);
+	if (!svg) {
+		svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
+		svg.id = PDF_FILTER_ID + "-svg";
+		svg.setAttribute("width", "0");
+		svg.setAttribute("height", "0");
+		svg.setAttribute("aria-hidden", "true");
+		svg.style.position = "absolute";
+		doc.body.appendChild(svg);
+	}
+	const table = pdfToneTable(f);
+	const key = `${f.saturation}|${table}`;
+	if (svg.dataset.key === key && style) return;
+	svg.dataset.key = key;
+	svg.innerHTML = `<filter id="${PDF_FILTER_ID}" color-interpolation-filters="sRGB">`
+		+ `<feColorMatrix type="saturate" values="${f.saturation}"/>`
+		+ `<feComponentTransfer><feFuncR type="table" tableValues="${table}"/><feFuncG type="table" tableValues="${table}"/><feFuncB type="table" tableValues="${table}"/></feComponentTransfer>`
+		+ `</filter>`;
+	if (!style) {
+		style = doc.createElement("style");
+		style.id = PDF_FILTER_STYLE_ID;
+		style.textContent = `#viewer .page .canvasWrapper { filter: url(#${PDF_FILTER_ID}); }`;
+		doc.head.appendChild(style);
+	}
+}
+
+/** The filter of the reader's state on both views of a PDF. */
+export function applyPdfFilter(reader) {
+	if (!reader || reader._type !== "pdf") return;
+	const filter = reader._state?.[NOTE_STRIP_STATE]?.pdfFilter;
+	for (const view of [reader._primaryView, reader._secondaryView]) {
+		try {
+			applyPdfFilterTo(view?._iframeWindow?.document, filter);
+		}
+		catch (e) {
+			console.warn("[ZotFlow Evo] Could not apply the page filter:", e);
+		}
+	}
+}
+
+/* ------------------------------------------------------------------ *
+ * Opening at a search (full-text search in the plugin)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Open the reader's find bar with `query` and run it: the first match
+ * from the current page on is shown. `{ query, caseSensitive, entireWord }`.
+ */
+export function startFind(reader, find) {
+	if (!reader?._updateState || !find?.query) return;
+	const key = "primaryViewFindState";
+	const current = reader._state?.[key] || {};
+	reader._updateState({
+		[key]: {
+			...current,
+			popupOpen: true,
+			active: true,
+			query: String(find.query),
+			caseSensitive: !!find.caseSensitive,
+			entireWord: !!find.entireWord,
+			highlightAll: true,
+			index: null,
+			result: null,
+		},
+	});
 }

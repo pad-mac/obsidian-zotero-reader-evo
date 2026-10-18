@@ -206,12 +206,62 @@ html.zf-evo-strip-doc {
 		gap: 1px;
 		min-height: 26px;
 		padding: 2px 8px 2px 6px;
+		// Out: a short fade, then hidden (no clicks); in: quicker.
+		opacity: 0;
 		visibility: hidden;
+		transition: opacity 140ms ease-out, visibility 0s linear 140ms;
 	}
 
 	body.zf-evo-hover .zf-evo-head-tools,
 	.zf-evo-head-tools:focus-within {
+		opacity: 1;
 		visibility: visible;
+		transition: opacity 90ms ease-in, visibility 0s;
+	}
+
+	// A person's name opens their note in Obsidian.
+	.zf-evo-person {
+		cursor: pointer;
+
+		&:hover {
+			color: var(--text-normal, #222);
+		}
+	}
+
+	// The page filter's sliders, under the buttons.
+	.zf-evo-filter-panel {
+		display: grid;
+		grid-template-columns: auto 1fr auto;
+		align-items: center;
+		gap: 2px 8px;
+		padding: 2px 10px 8px;
+		font-size: 12px;
+		color: var(--text-muted, #666);
+	}
+
+	.zf-evo-slider {
+		display: contents;
+	}
+
+	.zf-evo-slider input[type="range"] {
+		width: 100%;
+		min-width: 60px;
+		margin: 0;
+	}
+
+	.zf-evo-slider-value {
+		min-width: 3.2em;
+		text-align: end;
+		font-variant-numeric: tabular-nums;
+		font-feature-settings: "tnum";
+	}
+
+	.zf-evo-filter-reset {
+		grid-column: 1 / -1;
+		justify-self: end;
+		padding: 0 8px;
+		height: 20px;
+		font-size: 11px;
 	}
 
 	.zf-evo-tool-gap {
