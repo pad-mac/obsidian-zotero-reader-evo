@@ -318,6 +318,40 @@ html.zf-evo-strip-doc {
 		gap: 4px;
 	}
 
+	.zf-evo-chip.is-small {
+		height: 20px;
+		padding: 0 7px;
+		font-size: 10.5px;
+	}
+
+	.zf-evo-edit-ocr {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.zf-evo-edit-languages {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.zf-evo-edit-link {
+		height: 20px;
+		padding: 0 4px;
+		border: none;
+		background: transparent;
+		box-shadow: none;
+		color: var(--text-accent, var(--interactive-accent, #7b6cd9));
+		font-size: 10.5px;
+		cursor: pointer;
+
+		&:hover {
+			text-decoration: underline;
+		}
+	}
+
 	.zf-evo-chip {
 		height: 22px;
 		padding: 0 9px;

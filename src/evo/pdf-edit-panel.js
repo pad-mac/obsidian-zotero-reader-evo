@@ -30,7 +30,24 @@ const TOOLS = [
 	{ id: "straighten", label: "Straighten", title: "Turn tilted scanned pages level (automatic)" },
 	{ id: "removeOutline", label: "Remove outline", title: "Remove the PDF's bookmarks" },
 	{ id: "extract", label: "Extract pages", title: "Copy pages into a new PDF in a collection" },
+	{ id: "ocr", label: "Recognize text", title: "OCR: give scanned pages a text layer (an earlier one is replaced)" },
 ];
+
+/** The languages OCR can read ({ installed: [{ code, name }], selected }), from the plugin; null while asked. */
+function useOcrLanguages(wanted) {
+	const [info, setInfo] = useState(null);
+	useEffect(() => {
+		if (!wanted || info) return undefined;
+		let live = true;
+		Promise.resolve(ObsidianBridge?.evoOcrLanguages?.())
+			.then(result => live && setInfo(result || { installed: [], selected: [] }))
+			.catch(() => live && setInfo({ installed: [], selected: [] }));
+		return () => {
+			live = false;
+		};
+	}, [wanted, info]);
+	return info;
+}
 
 /** Tell the plugin what to do with the file. */
 function requestEdit(request) {
@@ -128,7 +145,19 @@ export default function PdfEditPanel({ view, pageLabels, filter, onClose }) {
 	const [saveFilter, setSaveFilter] = useState(false);
 	const [status, setStatus] = useState("");
 	const [busy, setBusy] = useState(false);
+	const [ocrLanguages, setOcrLanguages] = useState(null);
 	const overlay = useRef(null);
+	const canOcr = typeof ObsidianBridge?.evoOcrLanguages === "function";
+	const ocrInfo = useOcrLanguages(canOcr && tools.has("ocr"));
+	// The languages chosen last, once the plugin has said.
+	useEffect(() => {
+		if (ocrInfo && ocrLanguages === null) setOcrLanguages(ocrInfo.selected || []);
+	}, [ocrInfo, ocrLanguages]);
+	const toggleLanguage = code => setOcrLanguages((current) => {
+		const set = new Set(current || []);
+		if (!set.delete(code)) set.add(code);
+		return [...set];
+	});
 	const count = view?._iframeWindow?.PDFViewerApplication?.pagesCount || pageLabels?.length || 0;
 	const labels = pageLabels || [];
 	const hasLabels = labels.some((label, i) => String(label) !== String(i + 1));
@@ -183,15 +212,17 @@ export default function PdfEditPanel({ view, pageLabels, filter, onClose }) {
 	const extractPages = tools.has("extract") && Array.isArray(parsed) ? parsed : [];
 	const extractInvalid = tools.has("extract") && (!Array.isArray(parsed) || !extractPages.length);
 	const nothing = !tools.size && !(saveFilter && filterSet);
+	const ocrInvalid = tools.has("ocr") && !(ocrLanguages && ocrLanguages.length);
 
 	async function process() {
-		if (busy || nothing || extractInvalid) return;
+		if (busy || nothing || extractInvalid || ocrInvalid) return;
 		setBusy(true);
 		try {
 			const request = {};
 			if (tools.has("split")) request.split = overlay.current?.getSplit() ?? { shared: 0.5, pages: {} };
 			if (tools.has("removeOutline")) request.removeOutline = true;
 			if (tools.has("extract")) request.extract = { pages: extractPages, collectionKey: collection, open: openAfter };
+			if (tools.has("ocr")) request.ocr = { languages: ocrLanguages };
 			if (tools.has("straighten")) {
 				const app = view._iframeWindow.PDFViewerApplication;
 				const doc = view._iframeWindow.document;
@@ -224,7 +255,7 @@ export default function PdfEditPanel({ view, pageLabels, filter, onClose }) {
 	return (
 		<div className="zf-evo-head-panel zf-evo-edit-panel" onKeyDown={event => event.stopPropagation()}>
 			<div className="zf-evo-edit-tools">
-				{TOOLS.map(tool => (
+				{TOOLS.filter(tool => tool.id !== "ocr" || canOcr).map(tool => (
 					<button
 						key={tool.id}
 						type="button"
@@ -281,6 +312,34 @@ export default function PdfEditPanel({ view, pageLabels, filter, onClose }) {
 					</label>
 				</div>
 			)}
+			{tools.has("ocr") && (
+				<div className="zf-evo-edit-ocr">
+					<div className="zf-evo-edit-languages" role="group" aria-label="Languages">
+						{!ocrInfo && <span className="zf-evo-edit-hint">…</span>}
+						{ocrInfo && ocrInfo.installed.map(lang => (
+							<button
+								key={lang.code}
+								type="button"
+								className={cx("zf-evo-chip", "is-small", { "is-on": ocrLanguages?.includes(lang.code) })}
+								aria-pressed={!!ocrLanguages?.includes(lang.code)}
+								title={lang.code}
+								data-ocr-lang={lang.code}
+								onClick={() => toggleLanguage(lang.code)}
+							>
+								{lang.name}
+							</button>
+						))}
+						{typeof ObsidianBridge?.evoOpenOcrSettings === "function" && (
+							<button type="button" className="zf-evo-edit-link" onClick={() => ObsidianBridge.evoOpenOcrSettings()}>
+								Install more…
+							</button>
+						)}
+					</div>
+					<div className="zf-evo-edit-hint">
+						Pages that already show text are left as they are; an earlier OCR layer is replaced. Each added language makes it slower.
+					</div>
+				</div>
+			)}
 			{status && <div className="zf-evo-edit-status">{status}</div>}
 			<div className="zf-evo-panel-buttons">
 				<button type="button" className="zf-evo-panel-button" onClick={() => onClose(false)} disabled={busy}>
@@ -290,7 +349,7 @@ export default function PdfEditPanel({ view, pageLabels, filter, onClose }) {
 					type="button"
 					className="zf-evo-panel-button is-primary"
 					data-edit="process"
-					disabled={busy || nothing || extractInvalid}
+					disabled={busy || nothing || extractInvalid || ocrInvalid}
 					onClick={process}
 				>
 					Process
