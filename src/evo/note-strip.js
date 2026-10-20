@@ -28,11 +28,13 @@ import cx from "classnames";
 import { ObsidianBridge } from "../obsidian-adapter";
 import { ANNOTATION_COLORS } from "../common/defines";
 import {
-	NEUTRAL_PDF_FILTER, NOTE_STRIP_STATE, applyNoteStrip, applyPdfFilter, hasNoteStrip, isNeutralPdfFilter, pdfFilterOf,
-	reportNoteStrip, reportNoteStripAction, reportNoteStripOpen,
+	NEUTRAL_PDF_FILTER, NOTE_STRIP_STATE, adoptPdfInfoFilter, applyNoteStrip, applyPdfFilter, hasNoteStrip, isNeutralPdfFilter, pdfFilterOf,
+	reportNoteStrip, reportNoteStripAction, reportNoteStripOpen, reportPageInfo,
 } from "../obsidian-evo";
 import { PdfStripHost } from "./strip-host-pdf";
+import { WHITE_MIN, contrastToSlider, sliderToContrast, sliderToWhite, whiteToSlider } from "./page-filter.mjs";
 import { DomStripHost } from "./strip-host-dom";
+import PdfEditPanel from "./pdf-edit-panel";
 import {
 	arrowTargets, buildEntries, estimateHeight, flattenOutline, foldEntries, layoutCards, sortIndexAfter, titleRuns,
 	usedColors, LINE_HEIGHT,
@@ -616,6 +618,32 @@ function IconHighlights({ on }) {
 	);
 }
 
+/**
+ * Lucide's chevrons-down-up (fold everything) and chevrons-up-down (unfold
+ * everything): unlike the list toggle beside it.
+ */
+function IconFoldAll({ folded }) {
+	return (
+		<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+			{folded
+				? <><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></>
+				: <><path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/></>}
+		</svg>
+	);
+}
+
+/** Lucide's file-cog: editing the PDF. */
+function IconPdfEdit() {
+	return (
+		<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+			<path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M4.677 21.5a2 2 0 0 0 1.313.5H18a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v2.5"/>
+			<path d="m3.2 12.9-.9-.4"/><path d="m3.2 15.1-.9.4"/><path d="m4.9 11.2-.4-.9"/><path d="m4.9 16.8-.4.9"/>
+			<path d="m7.5 10.3-.4.9"/><path d="m7.5 17.7-.4-.9"/><path d="m9.7 12.5-.9.4"/><path d="m9.7 15.5-.9-.4"/>
+			<circle cx="6" cy="14" r="3"/>
+		</svg>
+	);
+}
+
 /** Lucide's sliders-horizontal: the page filter. */
 function IconFilter() {
 	return (
@@ -626,40 +654,63 @@ function IconFilter() {
 	);
 }
 
+/**
+ * The page filter's sliders: KOReader's contrast (a gamma, 0.8 … 50, on a
+ * logarithmic slider), white threshold (off at 255, more white to the
+ * right) and saturation. See page-filter.mjs.
+ */
 const FILTER_SLIDERS = [
-	{ key: "whiteThreshold", label: "White threshold", min: 0, max: 0.5, step: 0.01, format: v => `${Math.round(v * 100)}%` },
-	{ key: "contrast", label: "Contrast", min: 0.5, max: 3, step: 0.05, format: v => v.toFixed(2) },
-	{ key: "saturation", label: "Saturation", min: 0, max: 2, step: 0.05, format: v => `${Math.round(v * 100)}%` },
+	{
+		key: "contrast", label: "Contrast", max: 1000, step: 1,
+		toSlider: contrastToSlider, fromSlider: sliderToContrast,
+		format: v => (v < 10 ? v.toFixed(2) : v.toFixed(1)),
+	},
+	{
+		key: "whiteThreshold", label: "White threshold", max: 255 - WHITE_MIN, step: 1,
+		toSlider: whiteToSlider, fromSlider: sliderToWhite,
+		format: v => (v >= 255 ? "Off" : String(v)),
+	},
+	{
+		key: "saturation", label: "Saturation", max: 200, step: 1,
+		toSlider: v => Math.round(v * 100), fromSlider: p => Math.round(p) / 100,
+		format: v => `${Math.round(v * 100)}%`,
+	},
 ];
 
-/** The page filter's sliders, under the buttons. */
-function FilterPanel({ filter, onChange }) {
+/** The page filter's sliders, under the buttons (this PDF only). */
+function FilterPanel({ filter, onChange, onClose }) {
 	const f = pdfFilterOf(filter);
 	return (
-		<div className="zf-evo-filter-panel">
+		<div className="zf-evo-head-panel zf-evo-filter-panel">
 			{FILTER_SLIDERS.map(slider => (
 				<label key={slider.key} className="zf-evo-slider">
 					<span className="zf-evo-slider-label">{slider.label}</span>
 					<input
 						type="range"
-						min={slider.min}
+						min={0}
 						max={slider.max}
 						step={slider.step}
-						value={f[slider.key]}
-						onChange={event => onChange({ ...f, [slider.key]: Number(event.target.value) })}
+						value={slider.toSlider(f[slider.key])}
+						data-filter={slider.key}
+						onChange={event => onChange({ ...f, [slider.key]: slider.fromSlider(Number(event.target.value)) })}
 						onDoubleClick={() => onChange({ ...f, [slider.key]: NEUTRAL_PDF_FILTER[slider.key] })}
 					/>
 					<span className="zf-evo-slider-value">{slider.format(f[slider.key])}</span>
 				</label>
 			))}
-			<button
-				type="button"
-				className="zf-evo-filter-reset"
-				disabled={isNeutralPdfFilter(f)}
-				onClick={() => onChange({ ...NEUTRAL_PDF_FILTER })}
-			>
-				Reset
-			</button>
+			<div className="zf-evo-panel-buttons">
+				<button
+					type="button"
+					className="zf-evo-panel-button"
+					disabled={isNeutralPdfFilter(f)}
+					onClick={() => onChange({ ...NEUTRAL_PDF_FILTER })}
+				>
+					Reset
+				</button>
+				<button type="button" className="zf-evo-panel-button" onClick={onClose}>
+					Close
+				</button>
+			</div>
 		</div>
 	);
 }
@@ -683,7 +734,10 @@ function ViewAction({ action, onAction }) {
 	);
 }
 
-function StripHead({ host, annotations, settings, colors, paged, onToggleColor, onToggleHighlights, onAction, onFilter }) {
+function StripHead({
+	host, annotations, settings, colors, paged, foldable, allFolded, readOnly, pageLabels,
+	onToggleColor, onToggleHighlights, onAction, onFilter, onFoldAll,
+}) {
 	const swatches = useMemo(() => {
 		const used = usedColors(annotations, PALETTE);
 		// A chosen colour stays on offer after its last annotation is gone,
@@ -695,11 +749,10 @@ function StripHead({ host, annotations, settings, colors, paged, onToggleColor, 
 	}, [annotations, colors]);
 	const showHighlights = !!settings.highlights;
 	const [filterOpen, setFilterOpen] = useState(false);
+	const [editOpen, setEditOpen] = useState(false);
+	// PDF editing: on a PDF in a reader, when it may be written.
+	const canEdit = paged && !settings.stripOnly && !readOnly && !ObsidianBridge?.isLocalReader?.();
 	const filtered = !isNeutralPdfFilter(settings.pdfFilter);
-	// The sliders close when the pointer leaves the strip.
-	useEffect(() => host.on((event) => {
-		if (event.type === "hover" && !event.on) setFilterOpen(false);
-	}), [host]);
 	const person = useCallback((name, event) => {
 		event.stopPropagation();
 		onAction("person:" + name, event);
@@ -709,7 +762,7 @@ function StripHead({ host, annotations, settings, colors, paged, onToggleColor, 
 		onAction("title-menu", event);
 	}, [onAction]);
 	return (
-		<div className="zf-evo-head">
+		<div className={cx("zf-evo-head", { "is-pinned": filterOpen || editOpen })}>
 			<HeadBanner banner={settings.banner} onPerson={person} onMenu={menu}/>
 			<div className="zf-evo-head-tools">
 				{(settings.actions || []).map(action => (
@@ -726,6 +779,18 @@ function StripHead({ host, annotations, settings, colors, paged, onToggleColor, 
 				>
 					<IconHighlights on={showHighlights}/>
 				</button>
+				{foldable && (
+					<button
+						type="button"
+						className="zf-evo-tool"
+						title={allFolded ? "Unfold all headings" : "Fold all headings"}
+						aria-label={allFolded ? "Unfold all headings" : "Fold all headings"}
+						data-tool="fold-all"
+						onClick={onFoldAll}
+					>
+						<IconFoldAll folded={allFolded}/>
+					</button>
+				)}
 				{paged && !settings.stripOnly && (
 					<button
 						type="button"
@@ -737,6 +802,19 @@ function StripHead({ host, annotations, settings, colors, paged, onToggleColor, 
 						onClick={() => setFilterOpen(open => !open)}
 					>
 						<IconFilter/>
+					</button>
+				)}
+				{canEdit && (
+					<button
+						type="button"
+						className={cx("zf-evo-tool", { "is-on": editOpen })}
+						title="Edit the PDF: split, straighten, outline, extract pages"
+						aria-pressed={editOpen}
+						aria-expanded={editOpen}
+						data-tool="pdf-edit"
+						onClick={() => setEditOpen(open => !open)}
+					>
+						<IconPdfEdit/>
 					</button>
 				)}
 				<span className="zf-evo-filters" role="group" aria-label="Show only these colours">
@@ -757,7 +835,17 @@ function StripHead({ host, annotations, settings, colors, paged, onToggleColor, 
 					))}
 				</span>
 			</div>
-			{paged && !settings.stripOnly && filterOpen && <FilterPanel filter={settings.pdfFilter} onChange={onFilter}/>}
+			{paged && !settings.stripOnly && filterOpen && (
+				<FilterPanel filter={settings.pdfFilter} onChange={onFilter} onClose={() => setFilterOpen(false)}/>
+			)}
+			{canEdit && editOpen && (
+				<PdfEditPanel
+					view={host.view}
+					pageLabels={pageLabels}
+					filter={settings.pdfFilter}
+					onClose={() => setEditOpen(false)}
+				/>
+			)}
 		</div>
 	);
 }
@@ -767,7 +855,7 @@ function StripHead({ host, annotations, settings, colors, paged, onToggleColor, 
  * ------------------------------------------------------------------ */
 
 function Strip({
-	host, state, settings, colors, actions, paged, folded, onFold,
+	host, state, settings, colors, actions, paged, folded, onFold, onFoldable,
 	onUpdateAnnotations, onSelectAnnotations, onOpenAnnotationContextMenu, onNavigate,
 }) {
 	const reader = window._reader;
@@ -1143,7 +1231,13 @@ function Strip({
 		});
 		// Whether anything is listed at all, folded away or not.
 		const any = entries.some(entry => entry.kind === "annotation");
-		if (collapsed) return { entries: foldEntries(entries, folded), placed: null, any };
+		if (collapsed) {
+			// The headings that can be folded (the head's fold-all button).
+			const foldable = foldEntries(entries, new Set())
+				.filter(entry => entry.kind === "heading" && entry.hasContent)
+				.map(entry => entry.id);
+			return { entries: foldEntries(entries, folded), placed: null, any, foldable };
+		}
 		// Anchored: every entry on its line, beside its place on the page.
 		const items = [];
 		for (const entry of entries) {
@@ -1169,6 +1263,13 @@ function Strip({
 		// texts) and for the heights in `heights`, none of which React sees.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [annotations, headings, activeId, draft, collapsed, showHighlights, colors, folded, tick, host]);
+
+	// What the head's fold-all button folds (list only).
+	const foldableKey = (model.foldable || []).join("|");
+	useEffect(() => {
+		onFoldable(model.foldable || []);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [foldableKey, onFoldable]);
 
 	// Anchored, only the entries near the visible part are rendered.
 	// `scrollSlot` changes every SCROLL_STEP pixels of scrolling, which is
@@ -1225,8 +1326,9 @@ function Strip({
 			host.setArrows(null, null);
 			return undefined;
 		}
+		let targets = null;
 		const update = () => {
-			const targets = arrowTargets(model.entries, model.placed, host.viewTop, host.scrollTop + host.clientHeight);
+			targets = arrowTargets(model.entries, model.placed, host.viewTop, host.scrollTop + host.clientHeight);
 			host.setArrows(
 				targets?.up ? targets.up.annotation.pageLabel ?? "" : null,
 				targets?.down ? targets.down.annotation.pageLabel ?? "" : null,
@@ -1235,12 +1337,17 @@ function Strip({
 		update();
 		const off = host.on((event) => {
 			if (event.type === "scroll" || event.type === "geometry") update();
+			// A click on an arrow: to that comment.
+			else if (event.type === "arrow") {
+				const target = targets?.[event.dir];
+				if (target) onNavigate({ annotationID: target.annotation.id });
+			}
 		});
 		return () => {
 			off();
 			host.setArrows(null, null);
 		};
-	}, [host, model, collapsed]);
+	}, [host, model, collapsed, onNavigate]);
 
 	return (
 		<div
@@ -1297,6 +1404,8 @@ function StripRoot({ host, state, settings, paged, ...handlers }) {
 	const [colors, setColors] = useState(() => new Set());
 	// Outline headings folded away (list only), for this document.
 	const [folded, setFolded] = useState(() => new Set());
+	// The headings that can be folded at all (reported by the strip).
+	const [foldable, setFoldable] = useState([]);
 	const actions = useRef({});
 
 	const fold = useCallback((ids, shut) => {
@@ -1309,6 +1418,15 @@ function StripRoot({ host, state, settings, paged, ...handlers }) {
 			return next;
 		});
 	}, []);
+
+	const reportFoldable = useCallback((ids) => {
+		setFoldable(current => (current.join("|") === ids.join("|") ? current : ids));
+	}, []);
+	// Everything folded: unfold everything; otherwise fold everything.
+	const allFolded = foldable.length > 0 && foldable.every(id => folded.has(id));
+	const foldAll = useCallback(() => {
+		fold(foldable, !allFolded);
+	}, [fold, foldable, allFolded]);
 
 	const toggleColor = useCallback((color) => {
 		setColors((current) => {
@@ -1354,6 +1472,11 @@ function StripRoot({ host, state, settings, paged, ...handlers }) {
 					onToggleHighlights={toggleHighlights}
 					onAction={viewAction}
 					onFilter={changeFilter}
+					foldable={foldable.length > 0}
+					allFolded={allFolded}
+					onFoldAll={foldAll}
+					readOnly={!!state.readOnly}
+					pageLabels={state.pageLabels}
 				/>,
 				host.headMount
 			)}
@@ -1367,6 +1490,7 @@ function StripRoot({ host, state, settings, paged, ...handlers }) {
 					paged={paged}
 					folded={folded}
 					onFold={fold}
+					onFoldable={reportFoldable}
 					{...handlers}
 				/>,
 				host.mount
@@ -1416,7 +1540,10 @@ export default function EvoNoteStrip(props) {
 	const filterKey = JSON.stringify(settings?.pdfFilter ?? null);
 	const stats = props.state.primaryViewStats;
 	useEffect(() => {
-		if (props.type === "pdf") applyPdfFilter(window._reader);
+		if (props.type !== "pdf") return;
+		applyPdfFilter(window._reader);
+		// A filter written into this PDF, when none is kept for it.
+		if (stats?.pagesCount) adoptPdfInfoFilter(window._reader);
 	}, [filterKey, stats, props.type]);
 	const view = hasNoteStrip(props.type) && settings?.visible
 		? window._reader?._primaryView || null
@@ -1426,6 +1553,20 @@ export default function EvoNoteStrip(props) {
 	useEffect(() => {
 		host?.setStripOnly(stripOnly);
 	}, [host, stripOnly]);
+	// The page being read: beside the strip, and to the plugin (which shows
+	// it in the view's header while the strip is hidden).
+	const pageInfo = stats && Number.isInteger(stats.pageIndex) && stats.pagesCount
+		? { label: stats.pageLabel ?? String(stats.pageIndex + 1), index: stats.pageIndex, count: stats.pagesCount }
+		: null;
+	const pageKey = pageInfo ? `${pageInfo.label}|${pageInfo.index}|${pageInfo.count}` : "";
+	useEffect(() => {
+		host?.setPageInfo(pageInfo);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [host, pageKey]);
+	useEffect(() => {
+		if (pageInfo && !stripOnly) reportPageInfo(pageInfo);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [pageKey, stripOnly]);
 	if (!host || !settings?.visible) return null;
 	return (
 		<StripRoot

@@ -12,7 +12,9 @@ import {
 	refreshResolvedObsidianVariables,
 	startFind,
 	syncThemeFollowers,
+	hidePagesEarly,
 } from "./obsidian-evo";
+import { hoverViewScrollbar } from "./evo/scrollbar-hover";
 
 /**
  * -----------------------------------------------------------
@@ -95,6 +97,7 @@ export default class ZoteroReaderAdapter {
 						this.reader._secondaryView?._iframeWindow.document
 					);
 					this.applyPageBackgroundColor(this.reader._secondaryView?._iframeWindow.document);
+					hoverViewScrollbar(this.reader._secondaryView);
 					this.reader._secondaryViewContainer.style.opacity = "1";
 					this.secondaryViewInitialized = true;
 				}
@@ -229,6 +232,11 @@ export default class ZoteroReaderAdapter {
 			this.reader._primaryView._iframeWindow.document
 		);
 		this.applyPageBackgroundColor(this.reader._primaryView._iframeWindow.document);
+		// ZotFlow Evo: the scrollbar only while the pointer is over it.
+		hoverViewScrollbar(this.reader._primaryView);
+		// ZotFlow Evo: the strip alone: the pages are not to be seen even
+		// before the strip has started.
+		if (this.noteStrip?.stripOnly) hidePagesEarly(this.reader._primaryView);
 
 		this.reader._primaryViewContainer.style.opacity = "1";
 

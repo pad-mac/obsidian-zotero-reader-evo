@@ -1,0 +1,46 @@
+diff --git a/src/display/blender/blender.js b/src/display/blender/blender.js
+index 6ad142f..95c9560 100644
+--- a/src/display/blender/blender.js
++++ b/src/display/blender/blender.js
+@@ -156,7 +156,9 @@ class Blender {
+     const key = style.hex + (bg?.hex || "");
+     let newStyle = this.styleCache.get(key);
+     if (!newStyle) {
+-      newStyle = bg ? this.getTextStyle(style, bg) : this.calcStyle(style);
++      // ZotFlow Evo: the page filter, before the theme maps the colour.
++      const filtered = evoFilterColor(style);
++      newStyle = bg ? this.getTextStyle(filtered, bg) : this.calcStyle(filtered);
+       this.styleCache.set(key, newStyle);
+     }
+     return newStyle.toHex(style.alpha);
+@@ -322,6 +324,16 @@ class Blender {
+     offCtx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
+     const imageData = offCtx.getImageData(0, 0, sWidth, sHeight);
+ 
++    // ZotFlow Evo: the page filter (contrast, white threshold, saturation)
++    // changes the pixels before the theme looks at them, so paper it turns
++    // white is taken for the page's background like any other.
++    const evoFilter = typeof window !== "undefined" ? window.zfEvoPageFilter : null;
++    if (evoFilter) {
++      evoFilter.image(imageData.data);
++      offCtx.putImageData(imageData, 0, 0);
++      args = [offCanvas, 0, 0, sWidth, sHeight, dx, dy, dWidth, dHeight];
++    }
++
+     let type = "overlay";
+ 
+     if (this.forceInversion) {
+@@ -543,4 +555,13 @@ class Blender {
+   }
+ }
+ 
++/** ZotFlow Evo: a colour through the page filter (see customDrawImage()). */
++function evoFilterColor(color) {
++  const filter = typeof window !== "undefined" ? window.zfEvoPageFilter : null;
++  if (!filter) {
++    return color;
++  }
++  return new Color(filter.color(color.rgb));
++}
++
+ export { Blender };

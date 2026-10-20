@@ -265,6 +265,8 @@ export class StripHost {
 			for (const doc of [this.headDoc, this.stripDoc]) {
 				doc.body?.classList.toggle(HOVER_CLASS, on);
 			}
+			// And on the document the strip sits in (the page numbers beside it).
+			this.doc.documentElement.classList.toggle("zf-evo-strip-hovered", on);
 			this._emit("hover", { on });
 		};
 		const enter = () => {
@@ -318,6 +320,13 @@ export class StripHost {
 	 */
 	// eslint-disable-next-line no-unused-vars
 	setArrows(up, down) {}
+
+	/**
+	 * The page being read, beside the strip: its label and its number of
+	 * the whole (`{ label, index, count }`). Only beside pages.
+	 */
+	// eslint-disable-next-line no-unused-vars
+	setPageInfo(info) {}
 
 	/**
 	 * Call `run` once no mouse button is held on the document: at once, or

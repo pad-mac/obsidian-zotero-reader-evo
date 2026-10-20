@@ -7,6 +7,9 @@
  * FORK.md in the plugin repository (pad-mac/zotflow-evo).
  */
 
+import {
+	NEUTRAL_PDF_FILTER, PDF_INFO_KEY, isNeutralPdfFilter, makePixelFilter, parsePdfFilter, pdfFilterOf, serializePdfFilter,
+} from "./evo/page-filter.mjs";
 import { ObsidianBridge } from "./obsidian-adapter";
 
 const RESOLVED_STYLE_ID = "zf-evo-resolved-vars";
@@ -359,6 +362,9 @@ export function applyNoteStrip(reader, settings) {
 	// the document stays loaded but out of sight (`_evo.scss`).
 	document.body?.classList.toggle(STRIP_ONLY_CLASS, !!next.stripOnly);
 	if ("pdfFilter" in settings) applyPdfFilter(reader);
+	// The plugin sends the header's buttons when it has started listening to
+	// this reader: the page it may have missed.
+	if ("actions" in settings && lastPageInfo) reportPageInfo(lastPageInfo);
 	const visible = !!next.visible && reader._type === "pdf";
 	if (visible !== stripShowsNotes) {
 		stripShowsNotes = visible;
@@ -386,6 +392,33 @@ export function reportNoteStrip(reader, settings) {
 	catch (e) {
 		console.warn("[ZotFlow Evo] Could not report a note strip setting:", e);
 	}
+}
+
+/** The page last reported (sent again when the plugin starts listening). */
+let lastPageInfo = null;
+
+/** The page being read (`{ label, index, count }`), for the plugin's view header. */
+export function reportPageInfo(info) {
+	lastPageInfo = info;
+	try {
+		ObsidianBridge?.handleEvent?.({ type: "pageInfo", ...info });
+	}
+	catch (e) {
+		console.warn("[ZotFlow Evo] Could not report the page:", e);
+	}
+}
+
+/**
+ * The strip alone: the PDF view's pages hidden at once, before the strip
+ * (which hides them for good, strip-host-pdf.js) has started.
+ */
+export function hidePagesEarly(view) {
+	const doc = view?._iframeWindow?.document;
+	if (!doc?.head || doc.getElementById("zf-evo-early-hide")) return;
+	const style = doc.createElement("style");
+	style.id = "zf-evo-early-hide";
+	style.textContent = "#viewerContainer, #sidebarContainer { visibility: hidden !important; }";
+	doc.head.appendChild(style);
 }
 
 /**
@@ -471,99 +504,84 @@ export function annotationsNewerHere(reader) {
 }
 
 /* ------------------------------------------------------------------ *
- * Colour filter over PDF pages (set in the note strip's head)
+ * The page filter for PDFs (set in the note strip's head, per PDF)
  * ------------------------------------------------------------------ */
 
-const PDF_FILTER_ID = "zf-evo-pdf-filter";
-const PDF_FILTER_STYLE_ID = "zf-evo-pdf-filter-style";
+/** Without a theme the page filter needs a neutral one: it works in its step (pdfjs/patches). */
+const IDENTITY_THEME = Object.freeze({ id: "zf-evo-identity", label: "None", background: "#ffffff", foreground: "#000000" });
 
-/** Neutral values: the pages as they are. */
-export const NEUTRAL_PDF_FILTER = { whiteThreshold: 0, contrast: 1, saturation: 1 };
+const rerenderTimers = new WeakMap();
 
-/** The filter's values within range (missing ones neutral). */
-export function pdfFilterOf(value) {
-	const clamp = (n, lo, hi, fallback) => (typeof n === "number" && Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : fallback);
-	return {
-		whiteThreshold: clamp(value?.whiteThreshold, 0, 0.5, 0),
-		contrast: clamp(value?.contrast, 0.5, 3, 1),
-		saturation: clamp(value?.saturation, 0, 2, 1),
-	};
-}
-
-export function isNeutralPdfFilter(filter) {
-	const f = pdfFilterOf(filter);
-	return f.whiteThreshold === 0 && f.contrast === 1 && f.saturation === 1;
-}
-
-/**
- * The tone curve, as an feComponentTransfer table: everything within
- * `whiteThreshold` of white becomes white (a white point), then a gamma of
- * `contrast` — above 1 text and lines get darker, white and black stay.
- * Like KOReader's white threshold and contrast.
- */
-export function pdfToneTable(filter, steps = 64) {
-	const { whiteThreshold, contrast } = pdfFilterOf(filter);
-	const values = [];
-	for (let i = 0; i <= steps; i++) {
-		const x = i / steps;
-		const lifted = Math.min(1, x / (1 - whiteThreshold));
-		values.push(Math.pow(lifted, contrast).toFixed(4));
-	}
-	return values.join(" ");
+/** Draw the pages of a PDF view again (after the filter changed), shortly. */
+function rerenderPages(view, delay = 120) {
+	const win = view?._iframeWindow;
+	if (!win) return;
+	clearTimeout(rerenderTimers.get(view));
+	rerenderTimers.set(view, setTimeout(async () => {
+		try {
+			for (const page of view._pages || []) page.originalPage?.reset?.();
+			await win.PDFViewerApplication?.initializedPromise;
+			win.PDFViewerApplication?.pdfViewer?.update();
+			view._pdfThumbnails?.clear?.();
+		}
+		catch (e) {
+			console.warn("[ZotFlow Evo] Could not draw the pages again:", e);
+		}
+	}, delay));
 }
 
 /**
- * Put the filter on the pages of one PDF view's document, or take it off
- * (neutral). An SVG filter (saturation, then the tone curve) on each page's
- * canvas; the text layer and annotations stay as they are.
+ * The page filter of the reader's state on both views of a PDF: set where
+ * pdf.js reads it (`zfEvoPageFilter`, see pdfjs/patches) and the pages drawn
+ * again when it changed. Cheap when nothing changed.
  */
-export function applyPdfFilterTo(doc, filter) {
-	if (!doc?.head || !doc.body) return;
-	const neutral = isNeutralPdfFilter(filter);
-	let style = doc.getElementById(PDF_FILTER_STYLE_ID);
-	let svg = doc.getElementById(PDF_FILTER_ID + "-svg");
-	if (neutral) {
-		style?.remove();
-		svg?.remove();
-		return;
-	}
-	const f = pdfFilterOf(filter);
-	if (!svg) {
-		svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
-		svg.id = PDF_FILTER_ID + "-svg";
-		svg.setAttribute("width", "0");
-		svg.setAttribute("height", "0");
-		svg.setAttribute("aria-hidden", "true");
-		svg.style.position = "absolute";
-		doc.body.appendChild(svg);
-	}
-	const table = pdfToneTable(f);
-	const key = `${f.saturation}|${table}`;
-	if (svg.dataset.key === key && style) return;
-	svg.dataset.key = key;
-	svg.innerHTML = `<filter id="${PDF_FILTER_ID}" color-interpolation-filters="sRGB">`
-		+ `<feColorMatrix type="saturate" values="${f.saturation}"/>`
-		+ `<feComponentTransfer><feFuncR type="table" tableValues="${table}"/><feFuncG type="table" tableValues="${table}"/><feFuncB type="table" tableValues="${table}"/></feComponentTransfer>`
-		+ `</filter>`;
-	if (!style) {
-		style = doc.createElement("style");
-		style.id = PDF_FILTER_STYLE_ID;
-		style.textContent = `#viewer .page .canvasWrapper { filter: url(#${PDF_FILTER_ID}); }`;
-		doc.head.appendChild(style);
-	}
-}
-
-/** The filter of the reader's state on both views of a PDF. */
 export function applyPdfFilter(reader) {
 	if (!reader || reader._type !== "pdf") return;
 	const filter = reader._state?.[NOTE_STRIP_STATE]?.pdfFilter;
+	const pixels = makePixelFilter(filter);
+	const key = pixels ? serializePdfFilter(filter) : "";
 	for (const view of [reader._primaryView, reader._secondaryView]) {
-		try {
-			applyPdfFilterTo(view?._iframeWindow?.document, filter);
+		const win = view?._iframeWindow;
+		if (!win) continue;
+		let changed = win.__zfEvoFilterKey !== key;
+		win.__zfEvoFilterKey = key;
+		win.zfEvoPageFilter = pixels;
+		// The theme step is where the filter works; without a theme (or after
+		// the reader set none again) a neutral one stands in.
+		if (pixels && !win.theme) {
+			win.theme = IDENTITY_THEME;
+			changed = true;
 		}
-		catch (e) {
-			console.warn("[ZotFlow Evo] Could not apply the page filter:", e);
+		else if (!pixels && win.theme === IDENTITY_THEME) {
+			win.theme = null;
+			changed = true;
 		}
+		if (changed) rerenderPages(view);
+	}
+}
+
+/**
+ * A filter written into the PDF (Info dictionary, PDF_INFO_KEY) is used
+ * when the plugin has none for this PDF (`pdfFilter: null`), and reported
+ * to it to be kept. Once per document.
+ */
+export async function adoptPdfInfoFilter(reader) {
+	if (!reader || reader._type !== "pdf" || reader.__zfEvoInfoChecked) return;
+	const settings = reader._state?.[NOTE_STRIP_STATE];
+	if (!settings || settings.pdfFilter !== null) return;
+	const doc = reader._primaryView?._iframeWindow?.PDFViewerApplication?.pdfDocument;
+	if (!doc) return;
+	reader.__zfEvoInfoChecked = true;
+	try {
+		const { info } = await doc.getMetadata();
+		const raw = info?.Custom?.[PDF_INFO_KEY];
+		const filter = parsePdfFilter(typeof raw === "string" ? raw : raw?.name);
+		if (!filter || isNeutralPdfFilter(filter)) return;
+		applyNoteStrip(reader, { pdfFilter: filter });
+		reportNoteStrip(reader, { pdfFilter: filter });
+	}
+	catch (e) {
+		console.warn("[ZotFlow Evo] Could not read the PDF's metadata:", e);
 	}
 }
 
@@ -593,3 +611,5 @@ export function startFind(reader, find) {
 		},
 	});
 }
+
+export { NEUTRAL_PDF_FILTER, isNeutralPdfFilter, pdfFilterOf };

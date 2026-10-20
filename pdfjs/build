@@ -26,6 +26,20 @@ add_generic_compatibility() {
 
 # Move into the PDF.js directory, install dependencies, and build
 pushd pdfjs/pdf.js
+
+# ZotFlow Evo: our changes to Zotero's pdf.js, kept as patches here (the
+# submodule is Zotero's repository). Each is applied once; a working tree
+# that already has it is left as it is. See pdfjs/patches/README.md.
+for patch in ../patches/*.patch; do
+	[[ -e "$patch" ]] || continue
+	if git apply --reverse --check "$patch" 2>/dev/null; then
+		echo "pdf.js patch already applied: $patch"
+	else
+		git apply "$patch"
+		echo "pdf.js patch applied: $patch"
+	fi
+done
+
 npm ci
 if [[ $PDFJS_CONFIG != "web" && $PDFJS_CONFIG != "obsidian" ]]; then
 	npx gulp generic

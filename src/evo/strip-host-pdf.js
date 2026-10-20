@@ -99,18 +99,20 @@ html.${ANCHORED_CLASS}.zf-evo-strip-timeline #${FRAME_ID} {
 	animation-timeline: --zf-evo-scroll;
 }
 /* Anchored, with no comment in view: where the nearest ones are. Shown
-   over the strip, not part of it; they take no clicks (this document is
-   the PDF view's). */
+   over the strip, not part of it, 40px in from the edges (the status bar
+   covers the bottom of the pane); a click goes to that comment. */
 #${COLUMN_ID} .zf-evo-arrow {
 	position: absolute;
-	left: 0;
-	right: 0;
+	left: 50%;
+	transform: translateX(-50%);
 	z-index: 1;
 	display: none;
 	justify-content: center;
 	align-items: center;
 	gap: 3px;
-	pointer-events: none;
+	padding: 1px 6px;
+	border-radius: 4px;
+	cursor: pointer;
 	color: var(--text-faint, rgba(128, 128, 128, 0.85));
 	font-family: var(--font-interface, system-ui, sans-serif);
 	font-size: 11px;
@@ -118,11 +120,44 @@ html.${ANCHORED_CLASS}.zf-evo-strip-timeline #${FRAME_ID} {
 	font-variant-numeric: tabular-nums;
 	font-feature-settings: "tnum";
 	opacity: 0.8;
+	transition: color 90ms ease-out, background-color 90ms ease-out;
+}
+#${COLUMN_ID} .zf-evo-arrow:hover {
+	opacity: 1;
+	color: var(--text-normal, #222);
+	background-color: var(--background-modifier-hover, rgba(128, 128, 128, 0.12));
 }
 #${COLUMN_ID} .zf-evo-arrow.is-shown { display: flex; }
-#${COLUMN_ID} .zf-evo-arrow.is-up { top: 6px; }
-#${COLUMN_ID} .zf-evo-arrow.is-down { bottom: 8px; }
+#${COLUMN_ID} .zf-evo-arrow.is-up { top: 40px; }
+#${COLUMN_ID} .zf-evo-arrow.is-down { bottom: 40px; }
 #${COLUMN_ID} .zf-evo-arrow svg { width: 12px; height: 12px; }
+/* The page being read, at the top right of the pages, beside the strip:
+   its label, then its number of the whole. Only while the pointer is over
+   the strip; a short fade. */
+.zf-evo-page-info {
+	position: absolute;
+	top: 8px;
+	right: calc(var(--zf-evo-strip-width, 320px) + 14px);
+	z-index: 3;
+	display: none;
+	gap: 8px;
+	padding: 2px 7px;
+	border-radius: 4px;
+	background-color: var(--pdf-page-background-color, rgba(255, 255, 255, 0.9));
+	color: var(--text-muted, rgba(90, 90, 90, 0.9));
+	font-family: var(--font-interface, system-ui, sans-serif);
+	font-size: 11px;
+	line-height: 16px;
+	font-variant-numeric: tabular-nums;
+	font-feature-settings: "tnum";
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 140ms ease-out;
+}
+html.${ON_CLASS} .zf-evo-page-info { display: flex; }
+html.zf-evo-strip-only .zf-evo-page-info { display: none; }
+html.zf-evo-strip-hovered .zf-evo-page-info { opacity: 1; transition-duration: 90ms; }
+.zf-evo-page-info .zf-evo-page-label { color: var(--text-normal, #333); }
 /* The strip alone (strip-only): the pages out of sight, the strip across. */
 html.zf-evo-strip-only #viewerContainer { visibility: hidden; }
 html.zf-evo-strip-only #${COLUMN_ID} { left: 0; width: auto; border-inline-start: 0; }
@@ -173,11 +208,22 @@ export class PdfStripHost extends StripHost {
 		for (const [dir, path] of [["up", "m18 15-6-6-6 6"], ["down", "m6 9 6 6 6-6"]]) {
 			const arrow = this.doc.createElement("div");
 			arrow.className = `zf-evo-arrow is-${dir}`;
-			arrow.setAttribute("aria-hidden", "true");
+			arrow.setAttribute("role", "button");
+			arrow.addEventListener("click", (event) => {
+				event.preventDefault();
+				event.stopPropagation();
+				this._emit("arrow", { dir });
+			});
 			arrow.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${path}"/></svg><span></span>`;
 			this.clip.appendChild(arrow);
 			this._arrows[dir] = arrow;
 		}
+
+		// The page being read, beside the strip (setPageInfo()).
+		this._pageInfo = this.doc.createElement("div");
+		this._pageInfo.className = "zf-evo-page-info";
+		this._pageInfo.setAttribute("aria-hidden", "true");
+		main.appendChild(this._pageInfo);
 
 		// Zoom, page sizes arriving, the pane being resized: all change the
 		// size of the scrolling content or of the area it scrolls in.
@@ -204,6 +250,9 @@ export class PdfStripHost extends StripHost {
 
 	_applyStripOnly(on) {
 		this.doc.documentElement.classList.toggle("zf-evo-strip-only", on);
+		// Hidden early while the reader opened (hidePagesEarly()): from here
+		// on the class does it.
+		if (!on) this.doc.getElementById("zf-evo-early-hide")?.remove();
 	}
 
 	_applyMode() {
@@ -272,6 +321,23 @@ export class PdfStripHost extends StripHost {
 			if (span.textContent !== text) span.textContent = text;
 			arrow.title = shown ? `Next comment: page ${text}` : "";
 		}
+	}
+
+	setPageInfo(info) {
+		const el = this._pageInfo;
+		if (!el) return;
+		const key = info ? `${info.label}|${info.index}|${info.count}` : "";
+		if (el.dataset.key === key) return;
+		el.dataset.key = key;
+		el.replaceChildren();
+		if (!info) return;
+		const label = this.doc.createElement("span");
+		label.className = "zf-evo-page-label";
+		label.textContent = info.label ?? "";
+		const number = this.doc.createElement("span");
+		number.className = "zf-evo-page-number";
+		number.textContent = `${info.index + 1} / ${info.count}`;
+		el.append(label, number);
 	}
 
 	get clientHeight() {
@@ -544,7 +610,8 @@ export class PdfStripHost extends StripHost {
 		this.container.removeEventListener("scroll", this._onScroll);
 		const root = this.doc.documentElement;
 		const wasVisible = root.classList.contains(ON_CLASS);
-		root.classList.remove(ON_CLASS, ANCHORED_CLASS, "zf-evo-strip-timeline", "zf-evo-strip-only");
+		root.classList.remove(ON_CLASS, ANCHORED_CLASS, "zf-evo-strip-timeline", "zf-evo-strip-only", "zf-evo-strip-hovered");
+		this._pageInfo?.remove();
 		super.destroy();
 		if (wasVisible) {
 			try {
