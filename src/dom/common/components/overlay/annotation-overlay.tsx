@@ -344,6 +344,16 @@ let HighlightOrUnderline: React.FC<HighlightOrUnderlineProps> = (props) => {
 					let y = !vert && underline ? rect.y + rect.height : rect.y;
 					let width = vert && underline ? 3 : rect.width;
 					let height = !vert && underline ? 3 : rect.height;
+					// ZotFlow Evo: highlights with slightly rounded corners
+					// (3 px, at most a quarter of the line), drawn the same way
+					// round, so lines that overlap still make one shape.
+					let r = underline ? 0 : Math.min(3, width / 4, height / 4);
+					if (r > 0.5) {
+						return `M ${x + r} ${y} H ${x + width - r} A ${r} ${r} 0 0 1 ${x + width} ${y + r}`
+							+ ` V ${y + height - r} A ${r} ${r} 0 0 1 ${x + width - r} ${y + height}`
+							+ ` H ${x + r} A ${r} ${r} 0 0 1 ${x} ${y + height - r}`
+							+ ` V ${y + r} A ${r} ${r} 0 0 1 ${x + r} ${y} Z`;
+					}
 					return `M ${x} ${y} h ${width} v ${height} H ${x} V ${y}`;
 				}).join('\n')}
 			/>

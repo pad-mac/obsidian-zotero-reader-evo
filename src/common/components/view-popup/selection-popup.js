@@ -4,6 +4,7 @@ import cx from 'classnames';
 import { ANNOTATION_COLORS } from '../../defines';
 import ViewPopup from './common/view-popup';
 import CustomSections from '../common/custom-sections';
+import { selectionToolToggleShown } from '../../../obsidian-evo';
 
 import { IconColor16 } from '../common/icons';
 
@@ -14,7 +15,8 @@ function SelectionPopup(props) {
 	const { l10n } = useLocalization();
 
 	function handleColorPick(color) {
-		let type = props.textSelectionAnnotationMode;
+		// ZotFlow Evo: with the switch hidden, a colour highlights.
+		let type = selectionToolToggleShown() ? props.textSelectionAnnotationMode : 'highlight';
 		props.onAddAnnotation({ ...props.params.annotation, type, color });
 	}
 

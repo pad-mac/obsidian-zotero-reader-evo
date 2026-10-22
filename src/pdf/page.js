@@ -37,6 +37,9 @@ function round(value) {
 	return Math.round(value * 100) / 100;
 }
 
+// ZotFlow Evo: the corner radius of highlights, in PDF points.
+const HIGHLIGHT_RADIUS = 2;
+
 // Renders the overlay (annotations, selection, find results, etc.) for a single
 // page as DOM elements positioned over the pdf.js page canvas, instead of
 // painting into the canvas. The canvas always contains pristine pdf.js output,
@@ -178,12 +181,24 @@ export default class Page {
 
 	_pushHighlight(items, annotation) {
 		let dark = this._layer._themeColorScheme === 'dark';
-		this._pushPositionRects(items, annotation.position, {
+		let style = {
 			color: annotation.color,
 			opacity: dark ? 0.3 : 0.4,
 			// Canvas used 'lighter' (additive) in dark mode and 'multiply' in light
 			blend: dark ? 'plus-lighter' : 'multiply'
-		});
+		};
+		// ZotFlow Evo: highlights with slightly rounded corners: 2 pt, at
+		// most a quarter of the line's height or width.
+		let rects = this._rectsForThisPage(this._p2v(annotation.position));
+		if (!rects) {
+			return;
+		}
+		for (let rect of rects) {
+			let w = Math.abs(rect[2] - rect[0]);
+			let h = Math.abs(rect[3] - rect[1]);
+			let radius = Math.min(HIGHLIGHT_RADIUS * this._scale, w / 4, h / 4);
+			this._pushRect(items, rect, radius > 0.5 ? { ...style, radius: round(radius) } : style);
+		}
 	}
 
 	_pushUnderline(items, annotation) {

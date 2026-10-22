@@ -353,6 +353,18 @@ export function applyToolbarHidden(hidden) {
  * collapsed, width, banner, highlights }`. Merged into what is already set,
  * so one field can change alone.
  */
+const TOOL_TOGGLE_CLASS = "zf-evo-tool-toggle";
+let selectionToolToggle = false;
+
+/**
+ * Whether the colour bubble over a selection shows Zotero's highlight /
+ * underline switch. Without it a colour always highlights (a mode chosen
+ * earlier would otherwise stay on, out of sight).
+ */
+export function selectionToolToggleShown() {
+	return selectionToolToggle;
+}
+
 export function applyNoteStrip(reader, settings) {
 	if (!reader?._updateState) return;
 	const current = reader._state?.[NOTE_STRIP_STATE] || {};
@@ -361,6 +373,10 @@ export function applyNoteStrip(reader, settings) {
 	// The strip alone, in a tab of its own (the plugin's "annotation strip"):
 	// the document stays loaded but out of sight (`_evo.scss`).
 	document.body?.classList.toggle(STRIP_ONLY_CLASS, !!next.stripOnly);
+	// The highlight / underline switch in the colour bubble: hidden unless
+	// the plugin's setting brings it back (`_evo.scss`, selection-popup.js).
+	selectionToolToggle = !!next.appearance?.toolToggle;
+	document.documentElement?.classList.toggle(TOOL_TOGGLE_CLASS, selectionToolToggle);
 	if ("pdfFilter" in settings) applyPdfFilter(reader);
 	// The plugin sends the header's buttons when it has started listening to
 	// this reader: the page it may have missed.

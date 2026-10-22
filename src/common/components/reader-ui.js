@@ -71,6 +71,8 @@ function View(props) {
 					&& state.annotations.find(x => x.id === state[name + 'ViewAnnotationPopup'].annotation.id)
 				)
 				&& <AnnotationPopup
+					// ZotFlow Evo: a popup (and its comment editor) per annotation
+					key={state[name + 'ViewAnnotationPopup'].annotation.id}
 					type={props.type}
 					readOnly={state.readOnly}
 					params={state[name + 'ViewAnnotationPopup']}

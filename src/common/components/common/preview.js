@@ -79,8 +79,8 @@ export function PopupPreview(props) {
 					</div>
 					{(annotation.pageLabel || props.type === 'pdf') && (
 						<div className="page" onDoubleClick={handlePageLabelDoubleClick}>
-							<div>{l10n.getString('reader-page')}</div>
-							<div className="label">{annotation.pageLabel || '-'}</div>
+							{/* ZotFlow Evo: the number alone (the word "Page" left out). */}
+							<div className="label" title={l10n.getString('reader-page') + ' ' + (annotation.pageLabel || '-')}>{annotation.pageLabel || '-'}</div>
 						</div>
 					)}
 				</div>
@@ -114,6 +114,7 @@ export function PopupPreview(props) {
 						}
 						readOnly={props.readOnly}
 						enableRichText={annotation.type !== 'text'}
+						autoFocus={props.autoFocus}
 						onChange={handleCommentChange}
 					/>
 				</div>

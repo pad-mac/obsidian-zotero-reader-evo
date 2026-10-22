@@ -1122,3 +1122,49 @@ html.zf-evo-strip-doc.zf-evo-strip-head {
 		height: auto;
 	}
 }
+
+// ----- The reader's popups (beta.13) -----
+// Rounder; the comment bubble and the colour bubble on Obsidian's main
+// background, in its interface font. Their arrow is drawn in
+// --color-background, which is the same (themes/_obsidian.scss).
+.view-popup {
+	border-radius: 12px;
+}
+
+.annotation-popup,
+.selection-popup {
+	background: var(--background-primary, var(--material-toolbar));
+}
+
+.annotation-popup {
+	width: 300px;
+
+	&,
+	.preview,
+	.comment .cm-scroller,
+	.comment .cm-content {
+		font-family: var(--font-interface, system-ui, sans-serif);
+	}
+
+	// The page: its number alone, in figures of one width.
+	.preview header .page {
+		> div:first-child {
+			margin-right: 0;
+		}
+
+		.label {
+			font-variant-numeric: tabular-nums;
+			font-feature-settings: "tnum";
+		}
+	}
+}
+
+// Zotero's highlight / underline switch: back with the plugin's setting
+// ("Reader popups"). Without it a colour highlights (selection-popup.js).
+.selection-popup .tool-toggle {
+	display: none;
+}
+
+html.zf-evo-tool-toggle .selection-popup .tool-toggle {
+	display: flex;
+}
