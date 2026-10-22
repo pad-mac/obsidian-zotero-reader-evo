@@ -362,3 +362,17 @@ test("titles: <i> and <em> italic, other markup left out", () => {
 	assert.deepEqual(titleRuns(""), []);
 	assert.deepEqual(titleRuns(undefined), []);
 });
+
+test("a gap keeps room below each comment before the next", () => {
+	const out = Object.fromEntries(layoutCards([
+		{ id: "a", anchor: 0, natural: 2 * L },
+		{ id: "b", anchor: 0, natural: L },
+		{ id: "c", anchor: 10 * L, natural: L },
+	], { gap: 8 }));
+	// b was pushed below a, with the gap; c keeps its line.
+	assert.equal(out.b.top, out.a.top + out.a.height + 8);
+	assert.equal(out.c.top, 10 * L);
+	// Without a gap, as before.
+	const plain = Object.fromEntries(layoutCards([{ id: "a", anchor: 0, natural: L }, { id: "b", anchor: 0, natural: L }]));
+	assert.equal(plain.b.top, L);
+});

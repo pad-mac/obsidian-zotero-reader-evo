@@ -169,6 +169,12 @@ html.zf-evo-strip-doc {
 		}
 	}
 
+	// List mode: room after the last entry, so it can be scrolled to the
+	// top; clicks fall through to the strip (a note after the last entry).
+	.zf-evo-tail {
+		pointer-events: none;
+	}
+
 	// ----- The head: title line, buttons, colour filters -----
 
 	.zf-evo-head {
@@ -211,9 +217,9 @@ html.zf-evo-strip-doc {
 	.zf-evo-head-title {
 		padding: 1px 10px 0;
 		color: var(--text-muted, #666);
-		font-size: 12px;
-		font-weight: 600;
-		line-height: 18px;
+		font-size: 14px;
+		font-weight: 500;
+		line-height: 19px;
 		overflow-wrap: anywhere;
 	}
 
@@ -243,7 +249,7 @@ html.zf-evo-strip-doc {
 	// The buttons (the Obsidian view's, while its header is hidden; then
 	// highlights and "+") and the colour filters, which move to a line of
 	// their own when the strip is narrow. Shown only while the pointer is
-	// over the strip (strip-host.js); hidden, they keep their room.
+	// over the head (strip-host.js); hidden, they keep their room.
 	.zf-evo-head-tools {
 		display: flex;
 		flex-wrap: wrap;
@@ -257,7 +263,7 @@ html.zf-evo-strip-doc {
 		transition: opacity 140ms ease-out, visibility 0s linear 140ms;
 	}
 
-	body.zf-evo-hover .zf-evo-head-tools,
+	body.zf-evo-head-hover .zf-evo-head-tools,
 	.zf-evo-head.is-pinned .zf-evo-head-tools,
 	.zf-evo-head-tools:focus-within {
 		opacity: 1;
@@ -485,6 +491,140 @@ html.zf-evo-strip-doc {
 		gap: 6px;
 	}
 
+	// The item's data editor (drawn by the plugin, its own styles): room to
+	// scroll when it is long.
+	.zf-evo-item-editor {
+		max-height: 55vh;
+		overflow-y: auto;
+		padding: 0;
+	}
+
+	// Page numbers and outline editors; revert's list.
+	.zf-evo-edit-labels,
+	.zf-evo-edit-outline,
+	.zf-evo-edit-revert {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.zf-evo-edit-label-row,
+	.zf-evo-edit-outline-row {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.zf-evo-edit-muted {
+		color: var(--text-faint, #999);
+		font-size: 11px;
+		white-space: nowrap;
+	}
+
+	.zf-evo-edit-summary {
+		margin-inline-start: auto;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.zf-evo-edit-num {
+		width: 52px;
+		height: 22px;
+		font-size: 12px;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.zf-evo-edit-icon {
+		flex: none;
+		width: 20px;
+		height: 20px;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		box-shadow: none;
+		color: var(--text-muted, #666);
+		font-size: 13px;
+		line-height: 20px;
+		cursor: pointer;
+
+		&:hover:not(:disabled) {
+			color: var(--text-normal, #222);
+			background: var(--background-modifier-hover, rgba(128, 128, 128, 0.15));
+			border-radius: 3px;
+		}
+
+		&:disabled {
+			opacity: 0.3;
+			cursor: default;
+		}
+	}
+
+	.zf-evo-edit-outline-list {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		max-height: 260px;
+		overflow-y: auto;
+	}
+
+	.zf-evo-edit-outline-row {
+		padding-inline-start: calc(var(--zf-evo-level, 0) * 14px);
+	}
+
+	.zf-evo-edit-page-input {
+		flex: none;
+		width: 54px;
+		height: 22px;
+		font-size: 12px;
+		font-variant-numeric: tabular-nums;
+
+		&.is-invalid {
+			border-color: var(--text-error, #d33);
+		}
+	}
+
+	.zf-evo-edit-title-input {
+		flex: 1 1 auto;
+		min-width: 0;
+		height: 22px;
+		font-size: 12px;
+	}
+
+	.zf-evo-edit-link.is-danger {
+		color: var(--text-error, #d33);
+	}
+
+	.zf-evo-edit-backup {
+		display: flex;
+		align-items: baseline;
+		gap: 6px;
+		font-size: 12px;
+
+		&.is-unsynced {
+			color: var(--text-faint, #999);
+		}
+	}
+
+	.zf-evo-edit-backup-when {
+		flex: none;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.zf-evo-edit-backup-what {
+		min-width: 0;
+		color: var(--text-muted, #666);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	// Revert stands apart from the edits.
+	.zf-evo-chip.is-revert {
+		margin-inline-start: auto;
+		border-style: dashed;
+	}
+
 	.zf-evo-edit-status {
 		color: var(--text-normal, #222);
 		font-variant-numeric: tabular-nums;
@@ -628,7 +768,7 @@ html.zf-evo-strip-doc {
 	.zf-evo-strip.is-list .zf-evo-card {
 		position: relative;
 		// Room between the entries: a click there starts a note.
-		margin-bottom: 12px;
+		margin-bottom: var(--zf-evo-entry-gap, 12px);
 
 		&.is-active {
 			box-shadow: 0 0 0 1px var(--zf-evo-rule);
@@ -738,6 +878,19 @@ html.zf-evo-strip-doc {
 
 	.zf-evo-quote {
 		white-space: pre-wrap;
+		// What was marked, a little faint beside the comments (a setting).
+		opacity: var(--zf-evo-highlight-opacity, 1);
+	}
+
+	// Setting: quotation marks round what was marked.
+	body.zf-evo-quotes .zf-evo-row.is-highlight .zf-evo-quote {
+		&::before {
+			content: "“";
+		}
+
+		&::after {
+			content: "”";
+		}
 	}
 
 	.zf-evo-image {

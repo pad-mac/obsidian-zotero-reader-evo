@@ -644,6 +644,43 @@ function IconPdfEdit() {
 	);
 }
 
+/** Lucide's pencil: editing the item's data. */
+function IconPencil() {
+	return (
+		<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+			<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>
+		</svg>
+	);
+}
+
+/**
+ * The item's data editor, drawn by the plugin into this frame (the same
+ * as in the library's item pane, with the abstract first).
+ */
+function ItemEditorHost() {
+	const ref = useRef(null);
+	useEffect(() => {
+		const el = ref.current;
+		if (!el) return undefined;
+		let handle = null;
+		try {
+			handle = ObsidianBridge?.evoMountItemEditor?.(el) || null;
+		}
+		catch (e) {
+			console.warn("[ZotFlow Evo] The item editor could not be shown:", e);
+		}
+		return () => {
+			try {
+				handle?.unload();
+			}
+			catch {
+				// Gone with the plugin.
+			}
+		};
+	}, []);
+	return <div ref={ref} className="zf-evo-head-panel zf-evo-item-editor" onKeyDown={event => event.stopPropagation()}/>;
+}
+
 /** Lucide's sliders-horizontal: the page filter. */
 function IconFilter() {
 	return (
@@ -750,6 +787,9 @@ function StripHead({
 	const showHighlights = !!settings.highlights;
 	const [filterOpen, setFilterOpen] = useState(false);
 	const [editOpen, setEditOpen] = useState(false);
+	const [itemOpen, setItemOpen] = useState(false);
+	// The item's data: for a Zotero item, when the plugin offers it.
+	const canEditItem = !readOnly && !ObsidianBridge?.isLocalReader?.() && typeof ObsidianBridge?.evoMountItemEditor === "function";
 	// PDF editing: on a PDF in a reader, when it may be written.
 	const canEdit = paged && !settings.stripOnly && !readOnly && !ObsidianBridge?.isLocalReader?.();
 	const filtered = !isNeutralPdfFilter(settings.pdfFilter);
@@ -762,7 +802,7 @@ function StripHead({
 		onAction("title-menu", event);
 	}, [onAction]);
 	return (
-		<div className={cx("zf-evo-head", { "is-pinned": filterOpen || editOpen })}>
+		<div className={cx("zf-evo-head", { "is-pinned": filterOpen || editOpen || itemOpen })}>
 			<HeadBanner banner={settings.banner} onPerson={person} onMenu={menu}/>
 			<div className="zf-evo-head-tools">
 				{(settings.actions || []).map(action => (
@@ -804,6 +844,19 @@ function StripHead({
 						<IconFilter/>
 					</button>
 				)}
+				{canEditItem && (
+					<button
+						type="button"
+						className={cx("zf-evo-tool", { "is-on": itemOpen })}
+						title={itemOpen ? "Done editing" : "Edit the item's data and abstract"}
+						aria-pressed={itemOpen}
+						aria-expanded={itemOpen}
+						data-tool="item-edit"
+						onClick={() => setItemOpen(open => !open)}
+					>
+						<IconPencil/>
+					</button>
+				)}
 				{canEdit && (
 					<button
 						type="button"
@@ -835,6 +888,7 @@ function StripHead({
 					))}
 				</span>
 			</div>
+			{canEditItem && itemOpen && <ItemEditorHost/>}
 			{paged && !settings.stripOnly && filterOpen && (
 				<FilterPanel filter={settings.pdfFilter} onChange={onFilter} onClose={() => setFilterOpen(false)}/>
 			)}
@@ -891,6 +945,17 @@ function Strip({
 	useEffect(() => {
 		host.setWidth(settings.width);
 	}, [host, settings.width]);
+	// How the entries look (the plugin's settings): quotes round what was
+	// marked, its text a little faint, the room between entries.
+	const look = settings.appearance || {};
+	const spacing = Number.isFinite(look.spacing) ? Math.max(4, Math.min(48, look.spacing)) : 12;
+	const highlightOpacity = Number.isFinite(look.highlightOpacity) ? Math.max(0.3, Math.min(1, look.highlightOpacity)) : 1;
+	useEffect(() => {
+		const root = host.stripDoc.documentElement;
+		root.style.setProperty("--zf-evo-entry-gap", `${spacing}px`);
+		root.style.setProperty("--zf-evo-highlight-opacity", String(highlightOpacity));
+		host.stripDoc.body?.classList.toggle("zf-evo-quotes", !!look.quotes);
+	}, [host, spacing, highlightOpacity, look.quotes]);
 	useEffect(() => {
 		host.setCollapsed(collapsed);
 	}, [host, collapsed]);
@@ -982,11 +1047,14 @@ function Strip({
 		return () => doc.removeEventListener("selectionchange", follow);
 	}, [activeId, collapsed, host]);
 
-	// As a list, the strip scrolls by itself: bring the opened entry into view.
+	// As a list, the strip scrolls by itself: bring the opened entry into
+	// view; one just made (not there before) goes to the top of the strip.
+	const knownIds = useRef(null);
 	useEffect(() => {
 		if (!activeId || !collapsed) return;
 		const el = host.stripDoc.querySelector(`[data-entry-id="${CSS.escape(activeId)}"]`);
-		el?.scrollIntoView({ block: "nearest" });
+		const isNew = knownIds.current && !knownIds.current.has(activeId);
+		el?.scrollIntoView({ block: isNew ? "start" : "nearest" });
 	}, [activeId, collapsed, host]);
 
 	const handleMeasure = useCallback((id, height) => {
@@ -1258,11 +1326,13 @@ function Strip({
 			items.push(entry);
 		}
 		items.sort((a, b) => a.anchor - b.anchor || (a.sortIndex < b.sortIndex ? -1 : a.sortIndex > b.sortIndex ? 1 : 0));
-		return { entries: items, placed: layoutCards(items), any };
+		// The room between entries beyond the usual (12 px in a list) also
+		// keeps anchored entries apart.
+		return { entries: items, placed: layoutCards(items, { gap: Math.max(0, spacing - 12) }), any };
 		// `tick` stands for what the host measures (page positions, zoom, page
 		// texts) and for the heights in `heights`, none of which React sees.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [annotations, headings, activeId, draft, collapsed, showHighlights, colors, folded, tick, host]);
+	}, [annotations, headings, activeId, draft, collapsed, showHighlights, colors, folded, tick, host, spacing]);
 
 	// What the head's fold-all button folds (list only).
 	const foldableKey = (model.foldable || []).join("|");
@@ -1318,6 +1388,14 @@ function Strip({
 
 	// Folded headings hide their comments; that is not "no comments".
 	const nothing = collapsed && !model.any;
+
+	// The entries there now, for telling a new one (after the effect above).
+	useEffect(() => {
+		knownIds.current = new Set(model.entries.map(x => x.id));
+	}, [model]);
+
+	// As a list, room after the last entry: it can be scrolled to the top.
+	const last = collapsed && visible.length ? visible[visible.length - 1] : null;
 
 	// Anchored, with no comment in view: arrows at the top and the bottom
 	// with the page of the nearest comment that way (strip-host-pdf.js).
@@ -1386,6 +1464,7 @@ function Strip({
 						onOpen={stripOnly ? handleOpen : undefined}
 					/>
 				)))}
+			{last && <ListTail lastId={last.id}/>}
 			{nothing && (
 				<div className="zf-evo-empty">
 					{colors.size
@@ -1397,6 +1476,37 @@ function Strip({
 			)}
 		</div>
 	);
+}
+
+/**
+ * Room after the last entry of the list, so it can be scrolled to the top
+ * with only space after it: as high as the strip's view less the entry
+ * (measured as drawn, margin included), kept so as both change.
+ */
+function ListTail({ lastId }) {
+	const ref = useRef(null);
+	useLayoutEffect(() => {
+		const tail = ref.current;
+		if (!tail) return undefined;
+		const doc = tail.ownerDocument;
+		const win = doc.defaultView;
+		const fit = () => {
+			const last = tail.previousElementSibling;
+			if (!last) return;
+			const style = win.getComputedStyle(last);
+			// The strip's own room below (a click there starts a note) counts too.
+			const below = parseFloat(win.getComputedStyle(tail.parentElement).paddingBottom || "0");
+			const used = last.getBoundingClientRect().height + parseFloat(style.marginBottom || "0") + below;
+			tail.style.height = Math.max(0, doc.body.clientHeight - used) + "px";
+		};
+		fit();
+		const observer = new win.ResizeObserver(fit);
+		observer.observe(doc.body);
+		const last = tail.previousElementSibling;
+		if (last) observer.observe(last);
+		return () => observer.disconnect();
+	}, [lastId]);
+	return <div ref={ref} className="zf-evo-tail" aria-hidden="true"/>;
 }
 
 /** The head and the strip, which share the colour filter. */

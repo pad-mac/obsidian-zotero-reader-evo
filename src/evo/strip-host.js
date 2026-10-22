@@ -34,6 +34,8 @@ export const STRIP_HEAD_CLASS = "zf-evo-strip-head";
 
 /** On the body of both documents while the pointer is over the strip: the head's buttons show. */
 export const HOVER_CLASS = "zf-evo-hover";
+/** On the head's body while the pointer is over the head (its buttons and filters show). */
+export const HEAD_HOVER_CLASS = "zf-evo-head-hover";
 
 /** How long the buttons stay after the pointer left (it may be crossing from head to strip). */
 const HOVER_LINGER = 250;
@@ -283,6 +285,24 @@ export class StripHost {
 				apply(false);
 			}, HOVER_LINGER);
 		};
+		// The head alone: its buttons and filters show only over it.
+		let headTimer = null;
+		const head = (on) => {
+			if (headTimer !== null) {
+				this.win.clearTimeout(headTimer);
+				headTimer = null;
+			}
+			if (on) this.headDoc.body?.classList.add(HEAD_HOVER_CLASS);
+			else headTimer = this.win.setTimeout(() => {
+				headTimer = null;
+				this.headDoc.body?.classList.remove(HEAD_HOVER_CLASS);
+			}, HOVER_LINGER);
+		};
+		this.headDoc.documentElement.addEventListener("pointerenter", () => head(true));
+		this.headDoc.documentElement.addEventListener("pointerleave", () => head(false));
+		this.headDoc.addEventListener("pointermove", () => {
+			if (!this.headDoc.body?.classList.contains(HEAD_HOVER_CLASS) || headTimer !== null) head(true);
+		}, { passive: true });
 		for (const doc of [this.headDoc, this.stripDoc]) {
 			const root = doc.documentElement;
 			root.addEventListener("pointerenter", enter);

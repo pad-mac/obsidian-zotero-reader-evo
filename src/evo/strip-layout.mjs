@@ -35,10 +35,11 @@ export function lineAt(offsetInPage, lineHeight = LINE_HEIGHT) {
  * Nothing is ever hidden entirely.
  *
  * @param {{ id: string, anchor: number, natural: number }[]} items Sorted by
- *   `anchor`. `natural` is the comment's full height.
+ *   `anchor`. `natural` is the comment's full height. `gap`: room kept
+ *   below each comment before the next (ZotFlow Evo's spacing setting).
  * @returns {Map<string, { top: number, height: number, clamped: boolean }>}
  */
-export function layoutCards(items, { lineHeight = LINE_HEIGHT, clampLines = CLAMP_LINES } = {}) {
+export function layoutCards(items, { lineHeight = LINE_HEIGHT, clampLines = CLAMP_LINES, gap = 0 } = {}) {
 	const placed = new Map();
 	const limit = clampLines * lineHeight;
 	let floor = -Infinity;
@@ -50,7 +51,7 @@ export function layoutCards(items, { lineHeight = LINE_HEIGHT, clampLines = CLAM
 		let height = natural;
 		let clamped = false;
 		if (next) {
-			const room = next.anchor - top;
+			const room = next.anchor - top - gap;
 			if (natural > room) {
 				if (room >= lineHeight) {
 					height = room;
@@ -62,7 +63,7 @@ export function layoutCards(items, { lineHeight = LINE_HEIGHT, clampLines = CLAM
 			}
 		}
 		placed.set(item.id, { top, height, clamped });
-		floor = top + height;
+		floor = top + height + gap;
 	}
 	return placed;
 }

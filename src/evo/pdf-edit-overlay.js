@@ -187,10 +187,18 @@ export class PdfEditOverlay {
 		this._layout();
 	}
 
-	/** The pages chosen for extraction (from the range field). */
+	/**
+	 * The pages chosen for extraction (from the range field). The field also
+	 * echoes what was clicked here: the same pages again keep the start of a
+	 * Shift+click range (it was lost that way before, so ranges mostly
+	 * failed).
+	 */
 	setPicked(indexes) {
-		this.picked = new Set(indexes);
-		this.anchor = null;
+		const next = new Set(indexes);
+		const same = next.size === this.picked.size && [...next].every(i => this.picked.has(i));
+		if (same) return;
+		this.picked = next;
+		if (this.anchor !== null && !next.has(this.anchor)) this.anchor = null;
 		this._paint();
 	}
 

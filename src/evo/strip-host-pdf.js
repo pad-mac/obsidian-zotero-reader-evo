@@ -132,8 +132,9 @@ html.${ANCHORED_CLASS}.zf-evo-strip-timeline #${FRAME_ID} {
 #${COLUMN_ID} .zf-evo-arrow.is-down { bottom: 40px; }
 #${COLUMN_ID} .zf-evo-arrow svg { width: 12px; height: 12px; }
 /* The page being read, at the top right of the pages, beside the strip:
-   its label, then its number of the whole. Only while the pointer is over
-   the strip; a short fade. */
+   its label, then its number of the whole. Shown while the strip is (with
+   the strip hidden the plugin shows it in the tab bar); so is the pages'
+   scrollbar (scrollbar-hover.js: on hover only without the strip). */
 .zf-evo-page-info {
 	position: absolute;
 	top: 8px;
@@ -154,9 +155,9 @@ html.${ANCHORED_CLASS}.zf-evo-strip-timeline #${FRAME_ID} {
 	opacity: 0;
 	transition: opacity 140ms ease-out;
 }
-html.${ON_CLASS} .zf-evo-page-info { display: flex; }
+html.${ON_CLASS} .zf-evo-page-info { display: flex; opacity: 1; }
 html.zf-evo-strip-only .zf-evo-page-info { display: none; }
-html.zf-evo-strip-hovered .zf-evo-page-info { opacity: 1; transition-duration: 90ms; }
+html.${ON_CLASS} .zf-evo-scroller { --zf-evo-thumb: 1; }
 .zf-evo-page-info .zf-evo-page-label { color: var(--text-normal, #333); }
 /* The strip alone (strip-only): the pages out of sight, the strip across. */
 html.zf-evo-strip-only #viewerContainer { visibility: hidden; }
