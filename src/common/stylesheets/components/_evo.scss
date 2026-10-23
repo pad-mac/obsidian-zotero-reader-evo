@@ -491,10 +491,11 @@ html.zf-evo-strip-doc {
 		gap: 6px;
 	}
 
-	// The item's data editor (drawn by the plugin, its own styles): room to
-	// scroll when it is long.
+	// The item's data editor (drawn by the plugin, its own styles): as tall
+	// as its rows, as in the item pane; it scrolls only when it would leave
+	// less than 120px of the column below it (--zf-evo-room, strip-host.js).
 	.zf-evo-item-editor {
-		max-height: 55vh;
+		max-height: calc(var(--zf-evo-room, 900px) - 120px);
 		overflow-y: auto;
 		padding: 0;
 	}
@@ -1167,4 +1168,26 @@ html.zf-evo-strip-doc.zf-evo-strip-head {
 
 html.zf-evo-tool-toggle .selection-popup .tool-toggle {
 	display: flex;
+}
+
+// ----- Outlines (beta.15): titles at weight 500, the page after each in
+// subdued tabular figures -----
+.outline-view ul li .item {
+	.title {
+		flex: 1 1 auto;
+		min-width: 0;
+		font-weight: 500;
+	}
+
+	.zf-evo-outline-page {
+		flex: none;
+		align-self: flex-start;
+		padding: 0.21875rem 0.25rem 0.21875rem 0.5rem;
+		color: var(--text-faint, var(--fill-tertiary));
+		font-size: .6875rem;
+		line-height: 1.2;
+		font-variant-numeric: tabular-nums;
+		font-feature-settings: "tnum";
+		user-select: none;
+	}
 }

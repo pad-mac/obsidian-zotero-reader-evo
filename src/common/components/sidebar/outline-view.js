@@ -70,7 +70,16 @@ function needsActivation(outline, path) {
 	return !!itemToActivate.active;
 }
 
-function Item({ item, id, children, onOpenLink, onUpdate, onSelect }) {
+// ZotFlow Evo: the page an entry goes to (its label, else its number), if it is a PDF page.
+function pageOf(item, pageLabels) {
+	let index = item.location?.position?.pageIndex;
+	if (!Number.isInteger(index)) {
+		return null;
+	}
+	return (pageLabels && pageLabels[index]) || String(index + 1);
+}
+
+function Item({ item, id, children, onOpenLink, onUpdate, onSelect, pageLabels }) {
 	function handleExpandToggleClick() {
 		item.expanded = !item.expanded;
 		onUpdate();
@@ -113,13 +122,14 @@ function Item({ item, id, children, onOpenLink, onUpdate, onSelect }) {
 					onPointerDown={handlePointerDown}
 					onDoubleClick={handleDoubleClick}
 				>{item.title}{item.url && (<> [<a href={item.url} onClick={handleURLClick}>URL</a>]</>)}</div>
+				{pageOf(item, pageLabels) !== null && <div className="zf-evo-outline-page">{pageOf(item, pageLabels)}</div>}
 			</div>
 			{children && <div className="children">{children}</div>}
 		</li>
 	);
 }
 
-function OutlineView({ outline, currentOutlinePath, onNavigate, onOpenLink, onUpdate}) {
+function OutlineView({ outline, currentOutlinePath, onNavigate, onOpenLink, onUpdate, pageLabels }) {
 	let containerRef = useRef();
 
 	useEffect(() => {
@@ -232,6 +242,7 @@ function OutlineView({ outline, currentOutlinePath, onNavigate, onOpenLink, onUp
 						onOpenLink={onOpenLink}
 						onUpdate={handleUpdate}
 						onSelect={handleSelect}
+						pageLabels={pageLabels}
 					>
 						{item.expanded && item?.items && renderItems(item.items, counter)}
 					</Item>

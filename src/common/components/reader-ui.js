@@ -219,6 +219,7 @@ const ReaderUI = React.forwardRef((props, ref) => {
 										onNavigate={props.onNavigate}
 										onOpenLink={props.onOpenLink}
 										onUpdate={props.onUpdateOutline}
+										pageLabels={state.pageLabels}
 									/>
 								}
 							/>

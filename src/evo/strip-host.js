@@ -177,6 +177,15 @@ export class StripHost {
 			this._geometryChanged();
 		});
 		this._headObserver.observe(this.headMount);
+		// The room the column has, for panels in the head that may grow
+		// (the item editor): the head's own frame is only as tall as what
+		// is in it, so its vh would measure itself.
+		const hostWin = parent.ownerDocument.defaultView;
+		this._roomObserver = new hostWin.ResizeObserver(() => {
+			const room = Math.floor(this.column.getBoundingClientRect().height);
+			if (room > 0) this.headDoc.documentElement.style.setProperty("--zf-evo-room", room + "px");
+		});
+		this._roomObserver.observe(this.column);
 
 		// Obsidian's editor and renderer expect its DOM helpers (createDiv,
 		// addClass, …) in whatever window they work in, as in one of its own
@@ -659,6 +668,7 @@ export class StripHost {
 			// The view's window is gone already.
 		}
 		this._headObserver.disconnect();
+		this._roomObserver?.disconnect();
 		if (this._hoverTimer !== null) this.win.clearTimeout(this._hoverTimer);
 		unfollowTheme(this.stripDoc);
 		unfollowTheme(this.headDoc);

@@ -791,7 +791,9 @@ function StripHead({
 	// The item's data: for a Zotero item, when the plugin offers it.
 	const canEditItem = !readOnly && !ObsidianBridge?.isLocalReader?.() && typeof ObsidianBridge?.evoMountItemEditor === "function";
 	// PDF editing: on a PDF in a reader, when it may be written.
-	const canEdit = paged && !settings.stripOnly && !readOnly && !ObsidianBridge?.isLocalReader?.();
+	// ZotFlow Evo: not for a linked file or a group's shared folder (the plugin says why).
+	const canEdit = paged && !settings.stripOnly && !readOnly && !ObsidianBridge?.isLocalReader?.()
+		&& !ObsidianBridge?.evoPdfEditBlocked?.();
 	const filtered = !isNeutralPdfFilter(settings.pdfFilter);
 	const person = useCallback((name, event) => {
 		event.stopPropagation();
@@ -1390,8 +1392,26 @@ function Strip({
 	const nothing = collapsed && !model.any;
 
 	// The entries there now, for telling a new one (after the effect above).
+	// As a list, an annotation just made (here or in the pages) is scrolled
+	// to the top of the strip, opened or not: one made out of view would
+	// otherwise stay there. Only a few at once, and only ones made in the
+	// last minute: entries that appear because a filter changed are not new.
 	useEffect(() => {
+		const before = knownIds.current;
 		knownIds.current = new Set(model.entries.map(x => x.id));
+		if (!before || !collapsed) return;
+		const now = Date.now();
+		const added = model.entries.filter(entry => entry.kind === "annotation"
+			&& !entry.annotation._draft
+			&& !before.has(entry.id)
+			&& now - Date.parse(entry.annotation.dateCreated || entry.annotation.dateModified || "") < 60000);
+		if (!added.length || added.length > 3) return;
+		const target = added[added.length - 1];
+		host.stripWin.requestAnimationFrame(() => {
+			const el = host.stripDoc.querySelector(`[data-entry-id="${CSS.escape(target.id)}"]`);
+			el?.scrollIntoView({ block: "start" });
+		});
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [model]);
 
 	// As a list, room after the last entry: it can be scrolled to the top.
