@@ -75,6 +75,14 @@ import { initializeEditorMathJax } from "./obsidian-mathjax.js";
 				readerAdapter.setNoteStrip(settings);
 				return true;
 			},
+			// ZotFlow Evo: back to where the reader was before a jump.
+			async evoNavigateBack() {
+				return readerAdapter.evoNavigateBack();
+			},
+			// ZotFlow Evo: the outline and page for a book section (the command).
+			async evoSectionContext() {
+				return readerAdapter.evoSectionContext();
+			},
 			async destroy() {
 				if (destroyed) return true;
 				destroyed = true;

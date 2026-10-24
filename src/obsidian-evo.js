@@ -464,6 +464,21 @@ export function reportNoteStripAction(id, x, y) {
 	}
 }
 
+/**
+ * An outline heading was right-clicked (the strip): the plugin offers what
+ * can be done with it ("Create book section…"). `request`: the outline as
+ * `{ headings: [{ title, level, page }], index, pageLabels, pageCount }`,
+ * and `x`, `y` in the reader's document.
+ */
+export function reportHeadingMenu(request) {
+	try {
+		ObsidianBridge?.handleEvent?.({ type: "evoHeadingMenu", ...request });
+	}
+	catch (e) {
+		console.warn("[ZotFlow Evo] Could not report the heading's menu:", e);
+	}
+}
+
 let stripShowsNotes = false;
 
 /**

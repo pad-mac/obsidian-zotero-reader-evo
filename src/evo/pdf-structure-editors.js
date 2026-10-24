@@ -259,16 +259,45 @@ function OutlineRow({ entry, index, labels, maxLevel, onChange, onRemove, onGo }
 	);
 }
 
-export function OutlineEditor({ entries, labels, currentPage, onChange, onGo }) {
+/**
+ * The text selected in a PDF view, and its page: `{ text, page }`, or null
+ * when nothing is selected.
+ */
+export function selectionInView(view) {
+	try {
+		const ranges = (view?._selectionRanges || [])
+			.filter(range => range && !range.collapsed)
+			.slice()
+			.sort((a, b) => a.pageIndex - b.pageIndex)
+			.slice(0, 2);
+		let text = ranges.map(range => range.text || "").join(" ");
+		let page = Number.isInteger(ranges[0]?.position?.pageIndex) ? ranges[0].position.pageIndex : null;
+		if (!text.trim()) {
+			text = String(view?._iframeWindow?.getSelection?.()?.toString() || "");
+			page = null;
+		}
+		text = text.replace(/\s+/g, " ").trim();
+		return text ? { text: text.slice(0, 300), page } : null;
+	}
+	catch {
+		return null;
+	}
+}
+
+export function OutlineEditor({ entries, labels, currentPage, selection, onChange, onGo }) {
 	const sortByPage = list => [...list].sort((a, b) => a.page - b.page);
 	const add = () => {
-		const page = Math.max(0, Math.min(labels.length - 1, currentPage));
+		// Text selected in the PDF (a heading, say) is the entry's title, and
+		// its page the entry's page.
+		const selected = selection?.() || null;
+		const wanted = Number.isInteger(selected?.page) ? selected.page : currentPage;
+		const page = Math.max(0, Math.min(labels.length - 1, wanted));
 		// After the entries up to this page, at the level of the one before.
 		let at = 0;
 		while (at < entries.length && entries[at].page <= page) at++;
 		const level = at > 0 ? entries[at - 1].level : 0;
 		const next = [...entries];
-		next.splice(at, 0, { title: "", page, level, fresh: true });
+		next.splice(at, 0, { title: selected?.text || "", page, level, fresh: true });
 		onChange(next);
 	};
 	return (

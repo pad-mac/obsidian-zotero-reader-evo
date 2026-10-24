@@ -932,13 +932,33 @@ html.zf-evo-strip-doc {
 		position: absolute;
 		left: 0;
 		right: 0;
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
 		padding-inline: calc(var(--zf-evo-gutter) + var(--zf-evo-depth, 0) * 12px) 8px;
 		overflow: hidden;
-		font-weight: 600;
+		font-weight: 500;
 		white-space: nowrap;
-		text-overflow: ellipsis;
 		cursor: default;
 		user-select: none;
+
+		.zf-evo-heading-title {
+			flex: 1 1 auto;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+	}
+
+	// The page a heading goes to: subdued, in figures of one width.
+	.zf-evo-heading-page {
+		flex: none;
+		margin-inline-start: auto;
+		color: var(--text-faint, #999);
+		font-size: 0.92em;
+		font-weight: var(--font-normal, 400);
+		font-variant-numeric: tabular-nums;
+		font-feature-settings: "tnum";
+		line-height: var(--zf-evo-line);
 	}
 
 	.zf-evo-strip.is-list .zf-evo-heading {
@@ -994,6 +1014,8 @@ html.zf-evo-strip-doc {
 	.zf-evo-strip.is-list .zf-evo-heading-title {
 		// Takes the page to the chapter.
 		cursor: pointer;
+		overflow: visible;
+		text-overflow: clip;
 
 		&:hover {
 			color: var(--text-accent, var(--interactive-accent, inherit));

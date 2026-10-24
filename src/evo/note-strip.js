@@ -27,9 +27,10 @@ import { createPortal } from "react-dom";
 import cx from "classnames";
 import { ObsidianBridge } from "../obsidian-adapter";
 import { ANNOTATION_COLORS } from "../common/defines";
+import { setBackArrow } from "./back-arrow";
 import {
 	NEUTRAL_PDF_FILTER, NOTE_STRIP_STATE, adoptPdfInfoFilter, applyNoteStrip, applyPdfFilter, hasNoteStrip, isNeutralPdfFilter, pdfFilterOf,
-	reportNoteStrip, reportNoteStripAction, reportNoteStripOpen, reportPageInfo,
+	reportHeadingMenu, reportNoteStrip, reportNoteStripAction, reportNoteStripOpen, reportPageInfo,
 } from "../obsidian-evo";
 import { PdfStripHost } from "./strip-host-pdf";
 import { WHITE_MIN, contrastToSlider, sliderToContrast, sliderToWhite, whiteToSlider } from "./page-filter.mjs";
@@ -506,7 +507,7 @@ function IconChevron({ open }) {
 	);
 }
 
-function Heading({ entry, place, list, onOpen, onFold }) {
+function Heading({ entry, place, list, pageLabels, onOpen, onFold, onMenu }) {
 	const { heading } = entry;
 	// As a list a chapter can be folded away; beside the page everything
 	// stays where it is.
@@ -514,6 +515,16 @@ function Heading({ entry, place, list, onOpen, onFold }) {
 	function handleFold(event) {
 		event.stopPropagation();
 		onFold(entry, event.altKey);
+	}
+	// The page it goes to, as the PDF numbers its pages.
+	const page = Number.isInteger(heading.pageIndex)
+		? String(pageLabels?.[heading.pageIndex] || heading.pageIndex + 1)
+		: "";
+	function handleContextMenu(event) {
+		if (!onMenu || !Number.isInteger(heading.pageIndex)) return;
+		event.preventDefault();
+		event.stopPropagation();
+		onMenu(heading, event);
 	}
 	return (
 		<div
@@ -525,6 +536,7 @@ function Heading({ entry, place, list, onOpen, onFold }) {
 			data-entry-id={entry.id}
 			data-depth={heading.depth}
 			title={heading.title}
+			onContextMenu={handleContextMenu}
 		>
 			{list && (
 				<span
@@ -544,6 +556,7 @@ function Heading({ entry, place, list, onOpen, onFold }) {
 			>
 				{heading.title}
 			</span>
+			{page && <span className="zf-evo-heading-page">{page}</span>}
 		</div>
 	);
 }
@@ -1264,6 +1277,24 @@ function Strip({
 		host.prepareHeadings(flat);
 		return flat;
 	}, [state.outline, host]);
+
+	// A heading right-clicked: the plugin offers a book section of it, from
+	// the outline's headings of a page (PDF) and the PDF's page labels.
+	const handleHeadingMenu = useCallback((heading, event) => {
+		const paged = headings.filter(h => Number.isInteger(h.pageIndex));
+		const index = paged.findIndex(h => h.id === heading.id);
+		if (index < 0) return;
+		// In the reader's document (the plugin adds where that is).
+		const { x, y } = host.toTopPoint(host.frame, event.clientX, event.clientY);
+		reportHeadingMenu({
+			headings: paged.map(h => ({ title: h.title, level: h.depth || 0, page: h.pageIndex })),
+			index,
+			pageLabels: Array.isArray(state.pageLabels) ? state.pageLabels.map(String) : [],
+			pageCount: state.primaryViewStats?.pagesCount || 0,
+			x,
+			y,
+		});
+	}, [headings, host, state.pageLabels, state.primaryViewStats?.pagesCount]);
 	useEffect(() => {
 		let cancelled = false;
 		const pages = [...new Set(headings.map(heading => heading.pageIndex))]
@@ -1460,8 +1491,10 @@ function Strip({
 						entry={entry}
 						place={model.placed?.get(entry.id)}
 						list={collapsed}
+						pageLabels={state.pageLabels}
 						onOpen={handleHeading}
 						onFold={handleFold}
+						onMenu={readOnly ? undefined : handleHeadingMenu}
 					/>
 				)
 				: (
@@ -1685,14 +1718,21 @@ export default function EvoNoteStrip(props) {
 	}, [host, stripOnly]);
 	// The page being read: beside the strip, and to the plugin (which shows
 	// it in the view's header while the strip is hidden).
+	// `back`: whether the reader can go back to where it was before a jump
+	// (the arrow under the page number).
 	const pageInfo = stats && Number.isInteger(stats.pageIndex) && stats.pagesCount
-		? { label: stats.pageLabel ?? String(stats.pageIndex + 1), index: stats.pageIndex, count: stats.pagesCount }
+		? { label: stats.pageLabel ?? String(stats.pageIndex + 1), index: stats.pageIndex, count: stats.pagesCount, back: !!stats.canNavigateBack }
 		: null;
-	const pageKey = pageInfo ? `${pageInfo.label}|${pageInfo.index}|${pageInfo.count}` : "";
+	const pageKey = pageInfo ? `${pageInfo.label}|${pageInfo.index}|${pageInfo.count}|${pageInfo.back}` : "";
 	useEffect(() => {
 		host?.setPageInfo(pageInfo);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [host, pageKey]);
+	const primaryView = props.type === "pdf" ? window._reader?._primaryView : null;
+	const canGoBack = !!stats?.canNavigateBack;
+	useEffect(() => {
+		if (primaryView) setBackArrow(window._reader, canGoBack);
+	}, [primaryView, canGoBack]);
 	useEffect(() => {
 		if (pageInfo && !stripOnly) reportPageInfo(pageInfo);
 		// eslint-disable-next-line react-hooks/exhaustive-deps

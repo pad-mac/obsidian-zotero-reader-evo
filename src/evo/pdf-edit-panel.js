@@ -24,7 +24,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import cx from "classnames";
 import { ObsidianBridge } from "../obsidian-adapter";
 import { PdfEditOverlay } from "./pdf-edit-overlay";
-import { LabelEditor, OutlineEditor, detectRanges, readOutline, useLabels } from "./pdf-structure-editors";
+import { LabelEditor, OutlineEditor, detectRanges, readOutline, selectionInView, useLabels } from "./pdf-structure-editors";
 import { formatPageRange, parsePageRange } from "./page-range.mjs";
 import { isNeutralPdfFilter, pdfFilterOf } from "./page-filter.mjs";
 
@@ -417,7 +417,7 @@ export default function PdfEditPanel({ view, pageLabels, filter, onClose }) {
 			{tools.has("outline") && (
 				outline === null
 					? <div className="zf-evo-edit-hint">Reading the outline…</div>
-					: <OutlineEditor entries={outline} labels={shownLabels} currentPage={currentPage} onChange={setOutline} onGo={goTo}/>
+					: <OutlineEditor entries={outline} labels={shownLabels} currentPage={currentPage} selection={() => selectionInView(view)} onChange={setOutline} onGo={goTo}/>
 			)}
 			{tools.has("revert") && (
 				<div className="zf-evo-edit-revert" role="radiogroup" aria-label="Revert to">

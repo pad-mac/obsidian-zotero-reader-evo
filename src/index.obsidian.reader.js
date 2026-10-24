@@ -15,6 +15,7 @@ import {
 	hidePagesEarly,
 } from "./obsidian-evo";
 import { hoverViewScrollbar } from "./evo/scrollbar-hover";
+import { flattenOutline } from "./evo/strip-layout.mjs";
 
 /**
  * -----------------------------------------------------------
@@ -450,6 +451,37 @@ export default class ZoteroReaderAdapter {
 		if (!settings) return;
 		this.noteStrip = { ...this.noteStrip, ...settings };
 		applyNoteStrip(this.reader, this.noteStrip);
+	}
+
+	// ZotFlow Evo
+	evoNavigateBack() {
+		if (!this.reader?.canNavigateBack) return false;
+		this.reader.navigateBack();
+		return true;
+	}
+
+	/**
+	 * ZotFlow Evo: what a book section is made from (the plugin's command):
+	 * the outline's headings that go to a page (`{ title, level, page }`,
+	 * null while the outline is not read yet), the page labels, the number
+	 * of pages and the page being read.
+	 */
+	evoSectionContext() {
+		const reader = this.reader;
+		if (!reader) return null;
+		const stats = reader._state.primaryViewStats || {};
+		const outline = reader._state.outline;
+		const headings = Array.isArray(outline)
+			? flattenOutline(outline)
+				.filter(h => Number.isInteger(h.pageIndex))
+				.map(h => ({ title: h.title, level: h.depth || 0, page: h.pageIndex }))
+			: null;
+		return {
+			headings,
+			pageLabels: Array.isArray(reader._state.pageLabels) ? reader._state.pageLabels.map(String) : [],
+			pageCount: stats.pagesCount || 0,
+			pageIndex: Number.isInteger(stats.pageIndex) ? stats.pageIndex : 0,
+		};
 	}
 
 	addAnnotation(annotation) {
