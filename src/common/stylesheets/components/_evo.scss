@@ -846,6 +846,22 @@ html.zf-evo-strip-doc {
 		bottom: calc(var(--zf-evo-comment-pad) + 2px);
 	}
 
+	// What was marked with its comment: one bar from the first line of the
+	// one to the last of the other, over the comment's grey; the rows' own
+	// bars are not drawn.
+	.zf-evo-card-inner {
+		position: relative;
+	}
+
+	.zf-evo-bars.is-joined {
+		z-index: 1;
+		bottom: calc(var(--zf-evo-comment-pad) + 2px);
+	}
+
+	.zf-evo-card.is-joined .zf-evo-row .zf-evo-bars {
+		display: none;
+	}
+
 	// Fully round ends (half the width).
 	.zf-evo-bar {
 		width: 3px;

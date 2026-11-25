@@ -467,6 +467,8 @@ function Card({
 			className={cx("zf-evo-card", {
 				"is-active": active,
 				"is-comment-first": parts.comment && !parts.highlight,
+				// What was marked and its comment: one bar along both.
+				"is-joined": parts.comment && parts.highlight,
 				"is-clamped": !active && !list && place?.clamped,
 			})}
 			style={style}
@@ -491,6 +493,11 @@ function Card({
 			>{annotation.pageLabel || ""}</span>
 			<div className="zf-evo-card-clip">
 				<div className="zf-evo-card-inner" ref={innerRef}>
+					{parts.highlight && parts.comment && (
+						<span className="zf-evo-bars is-joined" aria-hidden="true">
+							<span className="zf-evo-bar"/>
+						</span>
+					)}
 					{parts.highlight && (
 						<div
 							className="zf-evo-row is-highlight is-first"
