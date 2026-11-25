@@ -138,8 +138,12 @@ body.zf-evo-side-strip {
 html.zf-evo-strip-doc {
 	--zf-evo-line: 20px;
 	--zf-evo-font-size: 13px;
-	// Left of the text: room for the colour bars (one or two).
+	// Left of the text: room for the colour bar of what was marked.
 	--zf-evo-gutter: 18px;
+	// A comment's ground: the text colour, faint (light grey in a light
+	// theme, a lighter grey in a dark one), and room above and below.
+	--zf-evo-comment-fill: color-mix(in srgb, var(--text-normal, #222) 6%, transparent);
+	--zf-evo-comment-pad: 5px;
 	--zf-evo-surface: var(--color-toolbar, var(--background-primary, #fff));
 	--zf-evo-rule: var(--background-modifier-border, rgba(128, 128, 128, 0.3));
 
@@ -747,12 +751,12 @@ html.zf-evo-strip-doc {
 		color: var(--text-faint, #999);
 	}
 
-	// An entry: what was marked (one bar) and/or the comment (two bars).
+	// An entry: what was marked (one bar) and/or the comment (on a light
+	// grey that reaches both edges of the strip).
 	.zf-evo-card {
 		position: absolute;
 		left: 0;
 		right: 0;
-		padding-inline-end: 8px;
 		cursor: default;
 
 		&.is-active {
@@ -779,10 +783,14 @@ html.zf-evo-strip-doc {
 	.zf-evo-row {
 		position: relative;
 		min-height: var(--zf-evo-line);
-		padding-inline-start: var(--zf-evo-gutter);
+		padding-inline: var(--zf-evo-gutter) 8px;
 		overflow-wrap: anywhere;
 
+		// The text keeps the gutter (lined up with what was marked); the
+		// grey goes from edge to edge.
 		&.is-comment {
+			padding-block: var(--zf-evo-comment-pad);
+			background-color: var(--zf-evo-comment-fill);
 			cursor: text;
 		}
 
@@ -800,7 +808,25 @@ html.zf-evo-strip-doc {
 	}
 
 	.zf-evo-row + .zf-evo-row {
-		margin-top: 2px;
+		margin-top: 4px;
+	}
+
+	// Opened (rounded): the grey follows the corners it touches.
+	.zf-evo-card.is-active .zf-evo-row.is-comment {
+		&:first-child {
+			border-start-start-radius: 4px;
+			border-start-end-radius: 4px;
+		}
+
+		&:last-child {
+			border-end-start-radius: 4px;
+			border-end-end-radius: 4px;
+		}
+	}
+
+	// A note (no highlight): its page number on the comment's first line.
+	.zf-evo-card.is-comment-first .zf-evo-page {
+		top: var(--zf-evo-comment-pad);
 	}
 
 	.zf-evo-bars {

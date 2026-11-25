@@ -37,8 +37,8 @@ import { WHITE_MIN, contrastToSlider, sliderToContrast, sliderToWhite, whiteToSl
 import { DomStripHost } from "./strip-host-dom";
 import PdfEditPanel from "./pdf-edit-panel";
 import {
-	arrowTargets, buildEntries, estimateHeight, flattenOutline, foldEntries, layoutCards, sortIndexAfter, titleRuns,
-	usedColors, LINE_HEIGHT,
+	arrowTargets, buildEntries, easeOut, estimateHeight, flattenOutline, foldEntries, halfwayScroll, layoutCards, sortIndexAfter,
+	titleRuns, usedColors, LINE_HEIGHT,
 } from "./strip-layout.mjs";
 
 export { hasNoteStrip };
@@ -51,6 +51,55 @@ const SCROLL_STEP = 400;
 
 /** Wait for the click that selected an annotation to finish before taking the focus. */
 const FOCUS_DELAY = 60;
+
+/** Anchored entries are kept at least this far apart (comments on their grey stay apart). */
+const ANCHORED_MIN_GAP = 4;
+
+/** How long the list takes to bring a new entry to the middle. */
+const NEW_ENTRY_SCROLL_MS = 260;
+
+const scrollAnimations = new WeakMap();
+
+/**
+ * As a list: bring an entry just made to the middle of the strip if it is
+ * in the lower half or out of view (`halfwayScroll`), in a short animated
+ * scroll; one in the upper half stays put. The wheel, a touch or a key
+ * stops the animation; with reduced motion it jumps.
+ */
+function revealNewEntry(host, el) {
+	const scroller = host.stripDoc.body;
+	if (!el || !scroller) return;
+	const win = host.stripWin;
+	const to = halfwayScroll({
+		top: el.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
+		scrollTop: scroller.scrollTop,
+		viewHeight: scroller.clientHeight,
+		maxScroll: scroller.scrollHeight - scroller.clientHeight,
+	});
+	scrollAnimations.get(scroller)?.();
+	if (to === null) return;
+	if (win.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+		scroller.scrollTop = to;
+		return;
+	}
+	const from = scroller.scrollTop;
+	const start = win.performance.now();
+	let frame = 0;
+	const stop = () => {
+		win.cancelAnimationFrame(frame);
+		for (const type of ["wheel", "touchstart", "keydown"]) scroller.removeEventListener(type, stop);
+		if (scrollAnimations.get(scroller) === stop) scrollAnimations.delete(scroller);
+	};
+	const step = (now) => {
+		const t = (now - start) / NEW_ENTRY_SCROLL_MS;
+		scroller.scrollTop = from + (to - from) * easeOut(t);
+		if (t < 1) frame = win.requestAnimationFrame(step);
+		else stop();
+	};
+	for (const type of ["wheel", "touchstart", "keydown"]) scroller.addEventListener(type, stop, { passive: true });
+	scrollAnimations.set(scroller, stop);
+	frame = win.requestAnimationFrame(step);
+}
 
 const PALETTE = ANNOTATION_COLORS.map(([, color]) => color.toLowerCase());
 const COLOR_NAMES = new Map(ANNOTATION_COLORS.map(([name, color]) => [color.toLowerCase(), name.replace("general-", "")]));
@@ -417,6 +466,7 @@ function Card({
 			ref={rootRef}
 			className={cx("zf-evo-card", {
 				"is-active": active,
+				"is-comment-first": parts.comment && !parts.highlight,
 				"is-clamped": !active && !list && place?.clamped,
 			})}
 			style={style}
@@ -461,10 +511,6 @@ function Card({
 							data-draggable={String(!active && !annotation._draft)}
 							onDragStart={event => startDrag(event, "comment")}
 						>
-							<span className="zf-evo-bars" aria-hidden="true">
-								<span className="zf-evo-bar"/>
-								<span className="zf-evo-bar"/>
-							</span>
 							{editable
 								? (
 									<StripEditor
@@ -1063,13 +1109,15 @@ function Strip({
 	}, [activeId, collapsed, host]);
 
 	// As a list, the strip scrolls by itself: bring the opened entry into
-	// view; one just made (not there before) goes to the top of the strip.
+	// view; one just made (not there before) to the middle if it would be
+	// in the lower half (revealNewEntry).
 	const knownIds = useRef(null);
 	useEffect(() => {
 		if (!activeId || !collapsed) return;
 		const el = host.stripDoc.querySelector(`[data-entry-id="${CSS.escape(activeId)}"]`);
 		const isNew = knownIds.current && !knownIds.current.has(activeId);
-		el?.scrollIntoView({ block: isNew ? "start" : "nearest" });
+		if (isNew) revealNewEntry(host, el);
+		else el?.scrollIntoView({ block: "nearest" });
 	}, [activeId, collapsed, host]);
 
 	const handleMeasure = useCallback((id, height) => {
@@ -1360,8 +1408,9 @@ function Strip({
 		}
 		items.sort((a, b) => a.anchor - b.anchor || (a.sortIndex < b.sortIndex ? -1 : a.sortIndex > b.sortIndex ? 1 : 0));
 		// The room between entries beyond the usual (12 px in a list) also
-		// keeps anchored entries apart.
-		return { entries: items, placed: layoutCards(items, { gap: Math.max(0, spacing - 12) }), any };
+		// keeps anchored entries apart; at least a little, so that comments
+		// one after the other (each on its grey) stay apart.
+		return { entries: items, placed: layoutCards(items, { gap: Math.max(ANCHORED_MIN_GAP, spacing - 12) }), any };
 		// `tick` stands for what the host measures (page positions, zoom, page
 		// texts) and for the heights in `heights`, none of which React sees.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1423,9 +1472,9 @@ function Strip({
 	const nothing = collapsed && !model.any;
 
 	// The entries there now, for telling a new one (after the effect above).
-	// As a list, an annotation just made (here or in the pages) is scrolled
-	// to the top of the strip, opened or not: one made out of view would
-	// otherwise stay there. Only a few at once, and only ones made in the
+	// As a list, an annotation just made (here or in the pages) is brought
+	// to the middle of the strip when it would be in the lower half or out
+	// of view, opened or not; in the upper half it stays. Only a few at once, and only ones made in the
 	// last minute: entries that appear because a filter changed are not new.
 	useEffect(() => {
 		const before = knownIds.current;
@@ -1439,8 +1488,7 @@ function Strip({
 		if (!added.length || added.length > 3) return;
 		const target = added[added.length - 1];
 		host.stripWin.requestAnimationFrame(() => {
-			const el = host.stripDoc.querySelector(`[data-entry-id="${CSS.escape(target.id)}"]`);
-			el?.scrollIntoView({ block: "start" });
+			revealNewEntry(host, host.stripDoc.querySelector(`[data-entry-id="${CSS.escape(target.id)}"]`));
 		});
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [model]);

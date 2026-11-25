@@ -376,3 +376,25 @@ test("a gap keeps room below each comment before the next", () => {
 	const plain = Object.fromEntries(layoutCards([{ id: "a", anchor: 0, natural: L }, { id: "b", anchor: 0, natural: L }]));
 	assert.equal(plain.b.top, L);
 });
+
+import { halfwayScroll, easeOut } from "../../src/evo/strip-layout.mjs";
+
+test("a new entry: left where it is in the upper half, brought to the middle from below or out of view", () => {
+	const view = { scrollTop: 1000, viewHeight: 800, maxScroll: 5000 };
+	assert.equal(halfwayScroll({ ...view, top: 0 }), null, "at the top edge");
+	assert.equal(halfwayScroll({ ...view, top: 400 }), null, "exactly at the middle");
+	assert.equal(halfwayScroll({ ...view, top: 401 }), 1001);
+	assert.equal(halfwayScroll({ ...view, top: 700 }), 1300, "lower half: up to the middle");
+	assert.equal(halfwayScroll({ ...view, top: 3000 }), 3600, "below the view");
+	assert.equal(halfwayScroll({ ...view, top: -300 }), 300, "above the view: down to the middle");
+	assert.equal(halfwayScroll({ scrollTop: 100, viewHeight: 800, maxScroll: 5000, top: -300 }), 0, "not before the start");
+	assert.equal(halfwayScroll({ scrollTop: 900, viewHeight: 800, maxScroll: 1000, top: 700 }), 1000, "not past the end");
+	assert.equal(halfwayScroll({ scrollTop: 1000, viewHeight: 800, maxScroll: 1000, top: 700 }), null, "already at the end");
+});
+
+test("the scroll's easing", () => {
+	assert.equal(easeOut(0), 0);
+	assert.equal(easeOut(1), 1);
+	assert.ok(easeOut(0.5) > 0.5, "faster at first");
+	assert.equal(easeOut(2), 1);
+});

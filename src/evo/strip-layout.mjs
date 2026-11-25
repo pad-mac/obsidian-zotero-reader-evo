@@ -423,3 +423,25 @@ export function titleRuns(raw) {
 	push(text.slice(at));
 	return runs;
 }
+
+/**
+ * Where a list strip scrolls to show an entry just made: an entry whose top
+ * is in the upper half of the view stays where it is (null); one lower down,
+ * or out of view, is brought to the middle. `top` is the entry's top in the
+ * view (0 = the view's top edge), `scrollTop` the list's scroll position,
+ * `viewHeight` the view's height, `maxScroll` how far the list can scroll.
+ *
+ * @returns {number | null} The scroll position to go to, or null.
+ */
+export function halfwayScroll({ top, scrollTop, viewHeight, maxScroll }) {
+	const half = viewHeight / 2;
+	if (top >= 0 && top <= half) return null;
+	const to = Math.round(Math.min(Math.max(0, scrollTop + top - half), Math.max(0, maxScroll)));
+	return to === Math.round(scrollTop) ? null : to;
+}
+
+/** How a short scroll moves: fast at first, settling gently (ease-out cubic). */
+export function easeOut(t) {
+	const u = 1 - Math.min(1, Math.max(0, t));
+	return 1 - u * u * u;
+}
