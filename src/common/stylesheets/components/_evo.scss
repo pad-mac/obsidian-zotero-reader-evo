@@ -751,8 +751,9 @@ html.zf-evo-strip-doc {
 		color: var(--text-faint, #999);
 	}
 
-	// An entry: what was marked (one bar) and/or the comment (on a light
-	// grey that reaches both edges of the strip).
+	// An entry: what was marked and/or the comment, each with one bar in
+	// the annotation's colour; the comment also on a light grey that
+	// reaches both edges of the strip.
 	.zf-evo-card {
 		position: absolute;
 		left: 0;
@@ -839,9 +840,16 @@ html.zf-evo-strip-doc {
 		pointer-events: none;
 	}
 
+	// A comment's bar runs along its text, inside its grey.
+	.zf-evo-row.is-comment .zf-evo-bars {
+		top: calc(var(--zf-evo-comment-pad) + 2px);
+		bottom: calc(var(--zf-evo-comment-pad) + 2px);
+	}
+
+	// Fully round ends (half the width).
 	.zf-evo-bar {
 		width: 3px;
-		border-radius: 2px;
+		border-radius: 999px;
 		background-color: var(--zf-evo-color);
 	}
 

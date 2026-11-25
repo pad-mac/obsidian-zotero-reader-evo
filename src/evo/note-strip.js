@@ -511,6 +511,9 @@ function Card({
 							data-draggable={String(!active && !annotation._draft)}
 							onDragStart={event => startDrag(event, "comment")}
 						>
+							<span className="zf-evo-bars" aria-hidden="true">
+								<span className="zf-evo-bar"/>
+							</span>
 							{editable
 								? (
 									<StripEditor
